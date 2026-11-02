@@ -7,6 +7,10 @@ pipeline {
         REPORT_DIR        = 'security-reports'
         TOOLS_BIN         = "${WORKSPACE}/.tools/bin"
         PATH              = "${WORKSPACE}/.tools/bin:${HOME}/.local/bin:${PATH}"
+
+        // NEW: container image names
+        FRONTEND_IMAGE    = "k6-frontend:${BUILD_NUMBER}"
+        BACKEND_IMAGE     = "k6-backend:${BUILD_NUMBER}"
     }
 
     options {
@@ -70,6 +74,7 @@ pipeline {
                     sonar-scanner --version || true
                     trivy --version || true
                     semgrep --version || true
+                    docker --version || true
 
                     echo "Workspace:"
                     pwd
@@ -170,6 +175,57 @@ pipeline {
             }
         }
 
+        // ================= NEW: Container image vulnerability scanning =================
+
+        stage('Docker Availability Check') {
+            steps {
+                sh '''
+                    docker --version
+                    docker info > /dev/null || { echo "Jenkins cannot reach the Docker daemon"; exit 1; }
+                '''
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                sh '''
+                    echo "Building frontend image..."
+                    docker build -t "${FRONTEND_IMAGE}" ./frontend
+
+                    echo "Building backend image..."
+                    docker build -t "${BACKEND_IMAGE}" ./backend
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan - Frontend') {
+            steps {
+                sh '''
+                    echo "Scanning frontend image..."
+                    trivy image \
+                        --scanners vuln \
+                        --format json \
+                        --output "${REPORT_DIR}/trivy-frontend-image.json" \
+                        "${FRONTEND_IMAGE}" || true
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan - Backend') {
+            steps {
+                sh '''
+                    echo "Scanning backend image..."
+                    trivy image \
+                        --scanners vuln \
+                        --format json \
+                        --output "${REPORT_DIR}/trivy-backend-image.json" \
+                        "${BACKEND_IMAGE}" || true
+                '''
+            }
+        }
+
+        // ================================================================================
+
         stage('Generate HTML Report') {
             steps {
                 sh '''
@@ -182,17 +238,19 @@ pipeline {
 
         stage('Archive Reports') {
             steps {
-               archiveArtifacts(
-    artifacts: "${REPORT_DIR}/*, dashboard.html",
-    fingerprint: true,
-    allowEmptyArchive: true
-)
+                archiveArtifacts(
+                    artifacts: "${REPORT_DIR}/*, dashboard.html",
+                    fingerprint: true,
+                    allowEmptyArchive: true
+                )
             }
         }
     }
 
     post {
         always {
+            // NEW: clean up the images built for scanning
+            sh 'docker rmi "${FRONTEND_IMAGE}" "${BACKEND_IMAGE}" || true'
             echo 'Security scan pipeline finished. See archived artifacts for JSON + HTML reports.'
         }
 
