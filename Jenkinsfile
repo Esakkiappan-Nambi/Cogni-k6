@@ -193,7 +193,7 @@ pipeline {
                     docker build -t "${FRONTEND_IMAGE}" ./Frontend/k6-UI
 
                     echo "Building backend image..."
-                    docker build -t "${BACKEND_IMAGE}" ./backend
+                    docker build -t "${BACKEND_IMAGE}" ./Backend
                 '''
             }
         }
