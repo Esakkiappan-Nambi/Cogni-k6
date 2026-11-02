@@ -231,10 +231,18 @@ def create_test(
             raise HTTPException(status_code=400, detail="Invalid UDV JSON")
 
     cookie_clear_each_iteration = False
+    cookie_user_cookies = []
+    cookie_policy_str = "strict"
     if enable_cookie_manager and cookie_config:
         try:
             parsed_cookie = json.loads(cookie_config)
             cookie_clear_each_iteration = parsed_cookie.get("clearEachIteration", False)
+            cookie_user_cookies = parsed_cookie.get("userCookies") or parsed_cookie.get("cookies", [])
+            cookie_policy_str = json.dumps({
+                "policy": parsed_cookie.get("policy", "strict"),
+                "userCookies": cookie_user_cookies,
+                "clearEachIteration": cookie_clear_each_iteration
+            })
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid cookie config")
 
@@ -285,6 +293,7 @@ def create_test(
         user_defined_variables=udv_data,
         schedule_enabled=enable_scheduling,
         schedule=schedule_data,
+        cookie_user_cookies=cookie_user_cookies,
     )
 
     new_test = Test(
@@ -302,6 +311,7 @@ def create_test(
         csv_variables=variable_name,
         cookie_enabled=enable_cookie_manager,
         cookie_clear_each_iteration=cookie_clear_each_iteration,
+        cookie_policy=cookie_policy_str,
         cache_enabled=enable_cache_manager,
         cache_clear_each_iteration=cache_clear_each_iteration,
         cache_max_size=cache_max_size,
@@ -395,10 +405,18 @@ def update_test(
             raise HTTPException(status_code=400, detail="Invalid UDV JSON")
 
     cookie_clear_each_iteration = False
+    cookie_user_cookies = []
+    cookie_policy_str = "strict"
     if enable_cookie_manager and cookie_config:
         try:
             parsed_cookie = json.loads(cookie_config)
             cookie_clear_each_iteration = parsed_cookie.get("clearEachIteration", False)
+            cookie_user_cookies = parsed_cookie.get("userCookies") or parsed_cookie.get("cookies", [])
+            cookie_policy_str = json.dumps({
+                "policy": parsed_cookie.get("policy", "strict"),
+                "userCookies": cookie_user_cookies,
+                "clearEachIteration": cookie_clear_each_iteration
+            })
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid cookie config")
 
@@ -451,6 +469,7 @@ def update_test(
         user_defined_variables=udv_data,
         schedule_enabled=enable_scheduling,
         schedule=schedule_data,
+        cookie_user_cookies=cookie_user_cookies,
     )
 
     test.test_name                   = test_name
@@ -464,6 +483,7 @@ def update_test(
     test.csv_variables               = variable_name
     test.cookie_enabled              = enable_cookie_manager
     test.cookie_clear_each_iteration = cookie_clear_each_iteration
+    test.cookie_policy               = cookie_policy_str
     test.cache_enabled               = enable_cache_manager
     test.cache_clear_each_iteration  = cache_clear_each_iteration
     test.cache_max_size              = cache_max_size
@@ -520,11 +540,6 @@ def delete_test(test_id: int, db: Session = Depends(get_db)):
 
 # ── Test execution ────────────────────────────────────────────────────────────
 
-def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, assertions_raw):
-    """
-    Runs k6 in a background thread with its own DB session.
-    Never call this from the FastAPI request thread.
-    """
 def terminate_k6_process(run_id: int):
     proc = running_processes.get(run_id)
     if proc:
@@ -585,14 +600,16 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
             elif metrics["error_rate"] >= 100:
                 status = "failed"
                 print("[k6] Failed: 100% error rate")
-            elif metrics["error_rate"] > 10:
+            elif assertions and (assertions.get("max_response_time") or assertions.get("max_error_rate") is not None):
+                if assertions.get("max_response_time") and metrics["avg_response_time"] > float(assertions["max_response_time"]):
+                    status = "failed"
+                    print(f"[k6] Failed SLA: avg_response_time {metrics['avg_response_time']:.1f}ms > {assertions['max_response_time']}ms")
+                elif assertions.get("max_error_rate") is not None and metrics["error_rate"] > float(assertions["max_error_rate"]):
+                    status = "failed"
+                    print(f"[k6] Failed SLA: error_rate {metrics['error_rate']:.1f}% > {assertions['max_error_rate']}%")
+            elif metrics.get("failed_requests", 0) > 0 and metrics["error_rate"] > 50:
                 status = "failed"
-                print(f"[k6] Failed: error rate {metrics['error_rate']:.1f}% > 10%")
-            elif assertions:
-                if metrics["avg_response_time"] > assertions.get("max_response_time", 99999):
-                    status = "failed"
-                elif metrics["error_rate"] > assertions.get("max_error_rate", 100):
-                    status = "failed"
+                print(f"[k6] Failed: high error rate {metrics['error_rate']:.1f}%")
 
         print(f"[k6] Final status: {status}")
 
@@ -902,6 +919,72 @@ def preview_step(
     }
 
 
+@app.post("/preview-script")
+def preview_script(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generates and returns the full k6 JavaScript code without saving to DB,
+    allowing the 'Generated k6 Script' tab to show live code syntax.
+    """
+    test_name = payload.get("testName") or "Preview_Scenario"
+    users = int(payload.get("users") or 10)
+    duration = int(payload.get("duration") or 30)
+    ramp_up = int(payload.get("rampUp") or 5)
+    loop_count = int(payload.get("loopCount") or 1)
+    scenario = payload.get("scenario") or []
+    assertions = payload.get("assertions")
+    enable_cookie_manager = bool(payload.get("enableCookieManager", False))
+    cookie_config = payload.get("cookieConfig") or {}
+    enable_cache_manager = bool(payload.get("enableCacheManager", False))
+    cache_config = payload.get("cacheConfig") or {}
+    enable_udv = bool(payload.get("enableUserDefinedVariables", False))
+    user_defined_variables = payload.get("userDefinedVariables") or []
+    enable_csv = bool(payload.get("enableCsvConfig", False))
+    csv_variables = payload.get("csvVariables") or ""
+    enable_scheduling = bool(payload.get("enableScheduling", False))
+    schedule = payload.get("schedule")
+
+    cookie_clear_each_iteration = cookie_config.get("clearEachIteration", False) if isinstance(cookie_config, dict) else False
+    cookie_user_cookies = (cookie_config.get("userCookies") or cookie_config.get("cookies", [])) if isinstance(cookie_config, dict) else []
+    cache_clear_each_iteration = cache_config.get("clearEachIteration", False) if isinstance(cache_config, dict) else False
+    cache_max_size = int(cache_config.get("maxSize", 5000)) if isinstance(cache_config, dict) else 5000
+
+    preview_path = generate_k6_script(
+        test_name="__preview__",
+        users=users,
+        duration=duration,
+        ramp_up=ramp_up,
+        loop_count=loop_count,
+        scenario=scenario,
+        assertions=assertions,
+        csv_enabled=enable_csv,
+        csv_path=None,
+        csv_variables=csv_variables,
+        cookie_enabled=enable_cookie_manager,
+        cookie_clear_each_iteration=cookie_clear_each_iteration,
+        cache_enabled=enable_cache_manager,
+        cache_clear_each_iteration=cache_clear_each_iteration,
+        cache_max_size=cache_max_size,
+        user_defined_variables=user_defined_variables if enable_udv else [],
+        schedule_enabled=enable_scheduling,
+        schedule=schedule,
+        cookie_user_cookies=cookie_user_cookies if enable_cookie_manager else [],
+    )
+
+    script_content = ""
+    if os.path.exists(preview_path):
+        with open(preview_path, "r", encoding="utf-8") as f:
+            script_content = f.read()
+        try:
+            os.remove(preview_path)
+        except Exception:
+            pass
+
+    return {"script": script_content}
+
+
 # ── NEW: Swagger / OpenAPI import — Step 1: discover ──────────────────────────
 # Called by the "Import from Swagger" tab's "Discover APIs" button.
 # Body: { "swagger_url": "https://petstore.swagger.io/v2/swagger.json" }
@@ -1061,19 +1144,72 @@ def download_report(run_id: int, db: Session = Depends(get_db)):
 
 # ── Telemetry Health endpoint ───────────────────────────────────────────────
 
+@app.get("/dashboard-report/{run_id}")
+def get_dashboard_report(run_id: int):
+    """
+    Serves the standalone Grafana Web Dashboard HTML report exported by k6.
+    Zero InfluxDB required.
+    """
+    html_path = os.path.abspath(f"reports/{run_id}_dashboard.html")
+    if os.path.exists(html_path):
+        return FileResponse(path=html_path, media_type="text/html")
+    return HTMLResponse(
+        content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8"/>
+          <title>k6 Live Dashboard - Run #{run_id}</title>
+          <style>
+            body {{
+              background: #0e1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center;
+            }}
+            .card {{
+              background: #161b27; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 32px 40px; max-width: 520px;
+            }}
+            h2 {{ color: #818cf8; margin-top: 0; font-size: 22px; }}
+            p {{ color: #94a3b8; font-size: 14px; line-height: 1.6; }}
+            .btn {{
+              display: inline-block; background: #6366f1; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-top: 16px;
+            }}
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>k6 Native Live Telemetry</h2>
+            <p>During active execution, live metrics (RPS, Latency, VUs) stream in real-time on port 5665.</p>
+            <a class="btn" href="http://localhost:5665" target="_blank">Open Live Dashboard (Port 5665)</a>
+          </div>
+        </body>
+        </html>
+        """,
+        status_code=200
+    )
+
+
 @app.get("/telemetry-status")
 def telemetry_status():
     """
-    Checks whether Grafana (port 3000) and InfluxDB (port 8086) are reachable,
-    returning connection health for live telemetry and dashboard links.
+    Checks whether Grafana (port 3000), InfluxDB (port 8086), and k6 Web Dashboard (port 5665) are reachable.
     """
     grafana_online = False
     influxdb_online = False
+    k6_dashboard_online = False
+
+    # Check k6 native web dashboard on 5665
+    try:
+        req = urllib.request.Request("http://localhost:5665", headers={"User-Agent": "k6-portal"})
+        with urllib.request.urlopen(req, timeout=0.6) as resp:
+            if resp.status in (200, 301, 302):
+                k6_dashboard_online = True
+    except Exception:
+        k6_dashboard_online = False
 
     # Check Grafana on 3000
     try:
         req = urllib.request.Request("http://localhost:3000/api/health", headers={"User-Agent": "k6-portal"})
-        with urllib.request.urlopen(req, timeout=1.0) as resp:
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
             if resp.status == 200:
                 grafana_online = True
     except Exception:
@@ -1082,7 +1218,7 @@ def telemetry_status():
     # Check InfluxDB on 8086
     try:
         req = urllib.request.Request("http://localhost:8086/ping", headers={"User-Agent": "k6-portal"})
-        with urllib.request.urlopen(req, timeout=1.0) as resp:
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
             if resp.status in (200, 204):
                 influxdb_online = True
     except Exception:
@@ -1091,6 +1227,8 @@ def telemetry_status():
     return {
         "grafana_online": grafana_online,
         "influxdb_online": influxdb_online,
+        "k6_dashboard_online": k6_dashboard_online,
+        "k6_web_dashboard_url": "http://localhost:5665",
         "grafana_base_url": "http://localhost:3000",
         "grafana_dashboard_path": "/d/adfqsh7/k6-load-testing-results",
     }

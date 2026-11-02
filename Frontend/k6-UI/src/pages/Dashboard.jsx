@@ -59,14 +59,24 @@ export default function Dashboard() {
   return (
     <Layout>
       {/* ═══════════════════════════════════════════════════
-          PAGE HEADER  (matches screenshot 1)
+          PAGE HEADER  (Executive telemetry overview)
           ═══════════════════════════════════════════════════ */}
       <div className="page-header">
         <div className="page-header-left">
           <div className="page-header-title">Dashboard Overview</div>
-          <div className="page-header-sub">Real-time health, execution trends, and active workloads</div>
+          <div className="page-header-sub">Real-time health telemetry, execution performance trends, and cluster workloads</div>
         </div>
-        {/* no right-side buttons on the header itself — they're in the hero */}
+        <div className="page-header-right">
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)",
+            borderRadius: "9999px", padding: "5px 12px",
+            fontSize: 12, color: "#34d399", fontWeight: 600,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
+            k6 Engine: Operational
+          </div>
+        </div>
       </div>
 
       {/* ═══════════════════════════════════════════════════
@@ -77,21 +87,24 @@ export default function Dashboard() {
           <div className="dash-hero-greeting">
             <h1>Welcome back, {fullName} 👋</h1>
             <p>
-              Monitor <span style={{ color: "var(--brand-l)" }}>live</span> k6 test suites,
-              track latency trends, and trigger load scenarios with{" "}
-              <span style={{ color: "var(--brand-l)" }}>high concurrency</span>.
+              Monitor <span style={{ color: "var(--brand-l)", fontWeight: 600 }}>live</span> k6 test suites,
+              track latency trends & SLA thresholds, and trigger automated load scenarios with{" "}
+              <span style={{ color: "var(--brand-l)", fontWeight: 600 }}>high concurrency</span>.
             </p>
           </div>
           <div className="dash-hero-actions">
+            <button className="btn btn-outline" onClick={() => navigate("/run-test")}>
+              <PlayCircle size={14} /> Run Test Suite
+            </button>
             <button className="btn btn-primary" onClick={() => navigate("/createtest")}>
-              <Plus size={14} /> Create Test Scenario
+              <Plus size={14} /> New Test Scenario
             </button>
           </div>
         </div>
       </div>
 
       {/* ═══════════════════════════════════════════════════
-          STAT CARDS  (matches screenshot 1 — dark cards)
+          STAT CARDS  (Enterprise Glass Cards)
           ═══════════════════════════════════════════════════ */}
       <div className="dash-stat-row">
         {/* Configured Tests */}
@@ -105,7 +118,9 @@ export default function Dashboard() {
               <FileText size={20} />
             </div>
           </div>
-          <div className="dash-stat-sub">Defined scenarios in catalog</div>
+          <div className="dash-stat-sub">
+            <span style={{ color: "#34d399", fontWeight: 600 }}>● Active Catalog</span> · scenarios defined
+          </div>
         </div>
 
         {/* Total Executions */}
@@ -119,14 +134,16 @@ export default function Dashboard() {
               <Activity size={20} />
             </div>
           </div>
-          <div className="dash-stat-sub">All-time triggered k6 runs</div>
+          <div className="dash-stat-sub">
+            <span>Streamed to InfluxDB & Grafana</span>
+          </div>
         </div>
 
         {/* Overall Success Rate */}
         <div className="dash-stat">
           <div className="dash-stat-top">
             <div>
-              <div className="dash-stat-label">Overall Success Rate</div>
+              <div className="dash-stat-label">SLA Pass Rate</div>
               <div className="dash-stat-value">{successRate.toFixed(2)}%</div>
             </div>
             <div className="dash-stat-icon ds-green">
@@ -136,20 +153,25 @@ export default function Dashboard() {
           <div className="dash-stat-progress">
             <div className="dash-stat-progress-fill" style={{ width: `${Math.min(successRate, 100)}%` }} />
           </div>
+          <div className="dash-stat-sub" style={{ marginTop: 2 }}>
+            <span>Target SLA: &gt; 99% availability</span>
+          </div>
         </div>
 
         {/* Active Executions */}
         <div className="dash-stat">
           <div className="dash-stat-top">
             <div>
-              <div className="dash-stat-label">Active Executions</div>
+              <div className="dash-stat-label">Active Runners</div>
               <div className="dash-stat-value">{stats.running_runs || 0}</div>
             </div>
             <div className="dash-stat-icon ds-amber">
               <Clock size={20} />
             </div>
           </div>
-          <div className="dash-stat-sub">Tests currently executing</div>
+          <div className="dash-stat-sub">
+            <span>{stats.running_runs > 0 ? "Live workloads executing" : "Cluster idle & ready"}</span>
+          </div>
         </div>
       </div>
 
@@ -162,16 +184,16 @@ export default function Dashboard() {
         <div className="dash-chart-card">
           <div className="dash-chart-hdr">
             <div className="dash-chart-hdr-left">
-              <h3><TrendingUp size={16} /> Execution Performance Trend</h3>
-              <p>Cumulative test executions</p>
+              <h3><TrendingUp size={17} color="var(--brand-l)" /> Execution Performance Trend</h3>
+              <p>Cumulative test outcomes and pass/fail telemetry over recent execution runs</p>
             </div>
             <div className="dash-chart-legend">
               <div className="dash-chart-legend-item">
-                <span className="legend-dot" style={{ background: "#ef4444" }} />
+                <span className="legend-dot" style={{ background: "#f43f5e", boxShadow: "0 0 6px #f43f5e" }} />
                 Failed Runs
               </div>
               <div className="dash-chart-legend-item">
-                <span className="legend-dot" style={{ background: "#22c55e" }} />
+                <span className="legend-dot" style={{ background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
                 Passed Runs
               </div>
             </div>

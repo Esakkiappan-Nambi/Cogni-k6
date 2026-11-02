@@ -61,13 +61,22 @@
   --rec:          #e53e3e;
   --rec-dim:      rgba(229,62,62,0.15);
 
-  /* ── Radii ── */
+  /* ── Aliases & Radii ── */
+  --bg:           #0e1117;
+  --bg2:          #161b27;
+  --bg3:          #1c2333;
+  --tx:           #e2e8f0;
+  --tx2:          #8b9ab4;
+  --tx3:          #64748b;
   --r-sm:   4px;
   --r-md:   6px;
   --r-lg:   10px;
   --r-xl:   14px;
   --r-2xl:  18px;
   --r-full: 9999px;
+  --r:      6px;
+  --r2:     10px;
+  --r3:     14px;
 
   /* ── Shadows ── */
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
@@ -675,3 +684,230 @@ input[type="checkbox"]:checked::after {
   padding: 60px; gap: 14px; color: var(--text-secondary);
 }
 .loading-box svg { color: var(--brand); }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   ENTERPRISE LIGHT THEME & CONTROLS
+   ══════════════════════════════════════════════════════════════════════ */
+[data-theme="light"] {
+  --bg-primary:   #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary:  #f1f5f9;
+  --bg-elevated:  #ffffff;
+  --bg-hover:     rgba(0,0,0,0.03);
+  --bg-active:    rgba(99,102,241,0.08);
+
+  --bg:           #f8fafc;
+  --bg2:          #ffffff;
+  --bg3:          #f1f5f9;
+
+  --sidebar-bg:       #0f172a;
+  --sidebar-width:    220px;
+  --sidebar-border:   rgba(255,255,255,0.08);
+  --sidebar-item-h:   rgba(255,255,255,0.08);
+  --sidebar-active:   rgba(99,102,241,0.22);
+  --sidebar-active-border: #818cf8;
+
+  --border:       #e2e8f0;
+  --border-light: #f1f5f9;
+  --border-focus: #6366f1;
+
+  --text-primary:   #0f172a;
+  --text-secondary: #475569;
+  --text-muted:     #94a3b8;
+  --text-disabled:  #cbd5e1;
+
+  --tx:             #0f172a;
+  --tx2:            #475569;
+  --tx3:            #64748b;
+
+  --brand:        #4f46e5;
+  --brand-light:  #6366f1;
+  --brand-dim:    rgba(79,70,229,0.1);
+  --brand-glow:   0 0 0 3px rgba(79,70,229,0.2);
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.07);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.1);
+}
+
+[data-theme="light"] body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .app-main {
+  background: var(--bg-primary);
+}
+
+[data-theme="light"] .data-table th {
+  background: #f1f5f9;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+[data-theme="light"] .data-table td {
+  border-bottom: 1px solid #e2e8f0;
+  color: #0f172a;
+}
+
+[data-theme="light"] .data-table tr:hover td {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .rt-hub-card,
+[data-theme="light"] .rt-table-wrap,
+[data-theme="light"] .hist-table-wrap,
+[data-theme="light"] .rt-terminal-card,
+[data-theme="light"] .rt-grafana-card,
+[data-theme="light"] .card,
+[data-theme="light"] .scenario-card,
+[data-theme="light"] .udv-box,
+[data-theme="light"] .schedule-box,
+[data-theme="light"] .auth-capture-box,
+[data-theme="light"] .rec-box,
+[data-theme="light"] .rec-traffic-box {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+}
+
+[data-theme="light"] .step-header {
+  background: #f8fafc !important;
+  border-bottom-color: #e2e8f0 !important;
+}
+
+[data-theme="light"] .search-box {
+  background: #ffffff;
+  border-color: #cbd5e1;
+}
+
+[data-theme="light"] .search-box input {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+[data-theme="light"] .form-group input,
+[data-theme="light"] .form-group select,
+[data-theme="light"] .form-group textarea,
+[data-theme="light"] .form-input,
+[data-theme="light"] .form-select,
+[data-theme="light"] .form-textarea,
+[data-theme="light"] .capture-url-input {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .form-group input:focus,
+[data-theme="light"] .form-group select:focus,
+[data-theme="light"] .form-group textarea:focus,
+[data-theme="light"] .form-input:focus,
+[data-theme="light"] .form-select:focus,
+[data-theme="light"] .form-textarea:focus,
+[data-theme="light"] .capture-url-input:focus {
+  background: #ffffff !important;
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
+}
+
+[data-theme="light"] .page-header-title {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .page-header-sub {
+  color: #64748b !important;
+}
+
+[data-theme="light"] .rt-hub-title,
+[data-theme="light"] .rt-table-top-title,
+[data-theme="light"] .hist-table-title {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .rt-hub-sub,
+[data-theme="light"] .rt-page-info,
+[data-theme="light"] .hist-page-info {
+  color: #64748b !important;
+}
+
+[data-theme="light"] .ct-tabs {
+  background: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+[data-theme="light"] .ct-tab {
+  color: #64748b !important;
+}
+
+[data-theme="light"] .ct-tab.active {
+  color: var(--brand) !important;
+  border-bottom-color: var(--brand) !important;
+}
+
+[data-theme="light"] .ct-summary-bar {
+  background: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+  color: #475569 !important;
+}
+
+[data-theme="light"] .ct-summary-bar strong {
+  color: #0f172a !important;
+}
+
+/* Sidebar Theme Toggle */
+.sb-theme-toggle-row {
+  padding: 10px 14px;
+  border-top: 1px solid var(--sidebar-border);
+}
+
+.sb-theme-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--t);
+}
+
+.sb-theme-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--brand-light);
+}
+
+/* Sort controls */
+.sort-select {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  outline: none;
+  transition: var(--t);
+}
+.sort-select:focus {
+  border-color: var(--brand);
+}
+[data-theme="light"] .sort-select {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: var(--t);
+}
+th.sortable:hover {
+  color: var(--brand-light);
+}

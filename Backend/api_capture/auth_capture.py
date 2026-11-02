@@ -111,34 +111,67 @@ class LoginConfig:
 
 USERNAME_SELECTORS = [
     "input[name='email']",
+    "input[name='email' i]",
     "input[name='username']",
+    "input[name='username' i]",
     "input[name='user']",
+    "input[name='user' i]",
     "input[name='login']",
+    "input[name='login' i]",
+    "input[name='account' i]",
     "input[type='email']",
     "input[id='email']",
-    "input[id='Email']"
+    "input[id='Email']",
+    "input[id*='email' i]",
     "input[id='username']",
+    "input[id='Username']",
+    "input[id*='user' i]",
+    "input[id*='login' i]",
     "input[autocomplete='email']",
     "input[autocomplete='username']",
     "input[placeholder*='email' i]",
     "input[placeholder*='username' i]",
+    "input[placeholder*='user' i]",
+    "input[placeholder*='login' i]",
+    "input[aria-label*='email' i]",
+    "input[aria-label*='username' i]",
 ]
 
 PASSWORD_SELECTORS = [
     "input[type='password']",
     "input[name='password']",
+    "input[name='password' i]",
+    "input[name='pass' i]",
     "input[id='password']",
     "input[id='Password']",
+    "input[id*='password' i]",
+    "input[id*='pass' i]",
     "input[autocomplete='current-password']",
+    "input[placeholder*='password' i]",
+    "input[aria-label*='password' i]",
 ]
 
 SUBMIT_SELECTORS = [
     "button[type='submit']",
     "input[type='submit']",
-    "button:has-text('Login')",
-    "button:has-text('Sign in')",
+    "button:has-text('Log In')",
     "button:has-text('Log in')",
+    "button:has-text('Login')",
+    "button:has-text('Sign In')",
+    "button:has-text('Sign in')",
+    "button:has-text('Signin')",
+    "button:has-text('Submit')",
+    "button:has-text('Continue')",
+    "input[value*='Log in' i]",
+    "input[value*='Login' i]",
+    "input[value*='Sign In' i]",
+    "input[value*='Sign in' i]",
+    "input[value*='Submit' i]",
+    "[role='button']:has-text('Log In')",
+    "[role='button']:has-text('Log in')",
     "[role='button']:has-text('Login')",
+    "[role='button']:has-text('Sign In')",
+    "[role='button']:has-text('Sign in')",
     "form button",
 ]
 
@@ -495,18 +528,49 @@ async def _extract_token_from_storage(page, debug: bool = False) -> Optional[str
 async def _find_element(page, user_selector: Optional[str], fallbacks: list[str], label: str):
     """
     Try user_selector first, then each fallback in order.
+    If none match, use smart DOM traversal heuristics.
     Returns the first visible element found, or None.
     """
     selectors = ([user_selector] if user_selector else []) + fallbacks
     for sel in selectors:
         try:
-            el = await page.wait_for_selector(sel, timeout=2_000, state="visible")
+            el = await page.wait_for_selector(sel, timeout=1_500, state="visible")
             if el:
                 print(f"[auth] Found {label} via selector: {sel}")
                 return el
         except Exception:
             continue
-    print(f"[auth] Could not find {label} with any selector")
+
+    # Heuristic Fallback
+    try:
+        if "username" in label.lower():
+            inputs = await page.query_selector_all("input:not([type='hidden']):not([type='submit']):not([type='checkbox']):not([type='radio']):not([type='button'])")
+            for inp in inputs:
+                if await inp.is_visible():
+                    t = (await inp.get_attribute("type") or "text").lower()
+                    if t in ["text", "email", "tel", ""]:
+                        print(f"[auth] Found {label} via fallback DOM heuristic (first visible text/email input)")
+                        return inp
+
+        elif "password" in label.lower():
+            inputs = await page.query_selector_all("input[type='password']")
+            for inp in inputs:
+                if await inp.is_visible():
+                    print(f"[auth] Found {label} via fallback password query")
+                    return inp
+
+        elif "submit" in label.lower():
+            btns = await page.query_selector_all("button, input[type='submit'], input[type='button'], a.btn, a.button")
+            for b in btns:
+                if await b.is_visible():
+                    txt = ((await b.inner_text()) or (await b.get_attribute("value") or "")).lower()
+                    if any(w in txt for w in ["log in", "login", "sign in", "signin", "submit", "continue", "next"]):
+                        print(f"[auth] Found {label} via fallback text match: {txt.strip()}")
+                        return b
+    except Exception as e:
+        print(f"[auth] Heuristic search error for {label}: {e}")
+
+    print(f"[auth] Could not find {label} with any selector or heuristic")
     return None
 
 

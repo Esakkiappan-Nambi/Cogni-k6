@@ -26,6 +26,7 @@ def generate_k6_script(
     ramp_down=5,
     schedule_enabled=False,
     schedule=None,
+    cookie_user_cookies=None,
 ):
     filename = f"{test_name}.js"
     filepath = os.path.join(SCRIPT_FOLDER, filename)
@@ -81,10 +82,7 @@ const csvData = new SharedArray("csvData", function () {{
         csv_data_access = """const data = csvData[(__VU - 1) % csvData.length];
     console.log("VU:", __VU, "User:", JSON.stringify(data));"""
 
-    # ── Cookie block ──────────────────────────────────────────────────────────
-    # NOTE: `jar_option` (built below, per-step) is what actually wires the
-    # jar into each individual http.get / http.request call. This block just
-    # sets up the jar itself and the per-iteration clear logic.
+    # ── Cookie block (JMeter HTTP Cookie Manager equivalent) ───────────────────
     cookie_jar_init = ""
     cookie_iteration_clear = ""
 
@@ -105,26 +103,61 @@ const csvData = new SharedArray("csvData", function () {{
                 except Exception:
                     pass
 
-        # Initialize cookie jar
-        cookie_jar_init = """
-    const jar = http.cookieJar(); // HTTP Cookie Manager
-    """
+        # User-defined predefined initial cookies (JMeter Cookie Manager table)
+        cookie_set_statements = []
+        if cookie_user_cookies and isinstance(cookie_user_cookies, list):
+            for c in cookie_user_cookies:
+                c_name = str(c.get("name", "")).strip()
+                c_val = str(c.get("value", "")).strip()
+                c_domain = str(c.get("domain", "")).strip()
+                c_path = str(c.get("path", "")).strip() or "/"
+                if not c_name:
+                    continue
+                if c_domain:
+                    if c_domain.startswith("http://") or c_domain.startswith("https://"):
+                        c_url = f"{c_domain.rstrip('/')}{c_path}"
+                    else:
+                        c_url = f"https://{c_domain.rstrip('/')}{c_path}"
+                elif base_urls:
+                    c_url = f"{base_urls[0].rstrip('/')}{c_path}"
+                else:
+                    c_url = f"https://localhost{c_path}"
+                cookie_set_statements.append(f'jar.set("{c_url}", "{c_name}", "{c_val}");')
 
-        # Clear cookies every iteration if enabled
+        seed_fn = ""
+        if cookie_set_statements:
+            seed_body = "\n        ".join(cookie_set_statements)
+            seed_fn = f"""
+    function seedPredefinedCookies() {{
+        {seed_body}
+    }}
+    seedPredefinedCookies();
+"""
+
+        # Initialize cookie jar
+        cookie_jar_init = f"""
+    const jar = http.cookieJar(); // HTTP Cookie Manager
+    {seed_fn}
+"""
+
+        # Clear cookies every iteration if enabled, but preserve predefined cookies
         if cookie_clear_each_iteration:
+            reseed = "seedPredefinedCookies();" if cookie_set_statements else ""
             if base_urls:
                 clears = "\n        ".join(
                     [f'jar.clear("{u}");' for u in base_urls]
                 )
 
                 cookie_iteration_clear = f"""
-    // Clear cookies (JMeter: clear each iteration)
-            {clears}
-    """
+    // Clear dynamic cookies each iteration (JMeter Cookie Manager semantics)
+        {clears}
+        {reseed}
+"""
             else:
-                cookie_iteration_clear = """
-    // No base URLs found for cookie clearing
-    """
+                cookie_iteration_clear = f"""
+    // Re-seed predefined cookies
+        {reseed}
+"""
 
     # ── Cache Manager block ───────────────────────────────────────────────────
     cache_init = ""
@@ -363,34 +396,11 @@ const csvData = new SharedArray("csvData", function () {{
             merged.update(headers_obj)
             headers_obj = merged
 
-        # ── Parse body ────────────────────────────────────────────────────────
-        body_obj = None
-        if body:
-            try:
-                if isinstance(body, str):
-                    parsed_body = json.loads(body)
-                    if isinstance(parsed_body, dict):
-                        body_obj = parsed_body
-                    else:
-                        body_obj = parsed_body
-                elif isinstance(body, dict):
-                    body_obj = body
-
-                if isinstance(body_obj, dict):
-                    body_obj = {
-                        k: replace_vars(v) if isinstance(v, str) else v
-                        for k, v in body_obj.items()
-                    }
-
-            except Exception as e:
-                print("Body parse error:", e)
-                body_obj = body
-
         # ── Build JS literals ─────────────────────────────────────────────────
         header_parts = []
         for k, v in headers_obj.items():
             if isinstance(v, str):
-                if any(f"${{variables.{var}}}" in v for var in extracted_vars):
+                if "${" in v:
                     header_parts.append(f'  "{k}": `{v}`')
                 else:
                     header_parts.append(f'  "{k}": "{v}"')
@@ -398,21 +408,21 @@ const csvData = new SharedArray("csvData", function () {{
                 header_parts.append(f'  "{k}": {json.dumps(v)}')
         headers_literal = "{\n" + ",\n".join(header_parts) + "\n}" if header_parts else "{}"
 
-        if body_obj is not None:
-            if isinstance(body_obj, dict):
-                body_parts = []
-                for k, v in body_obj.items():
-                    if isinstance(v, str):
-                        body_parts.append(f'"{k}": "{v}"')
-                    else:
-                        body_parts.append(f'"{k}": {json.dumps(v)}')
-                body_literal = "JSON.stringify({\n" + ",\n".join(body_parts) + "\n})"
+        # ── Process body with runtime variable substitution ────────────────────
+        if body:
+            raw_body_str = body if isinstance(body, str) else json.dumps(body)
+            processed_body = replace_vars(raw_body_str)
+            if "${" in processed_body:
+                # Contains dynamic variables (${variables.x} or ${data.x}).
+                # Use a JS template literal so JS evaluates them at runtime!
+                escaped_body = processed_body.replace("`", "\\`")
+                body_literal = f"`{escaped_body}`"
             else:
-                body_literal = json.dumps(str(body_obj))
-        elif body:
-            # body existed but JSON parsing failed earlier — body_literal
-            # was already set to a safe string literal above
-            pass
+                try:
+                    parsed = json.loads(processed_body)
+                    body_literal = json.dumps(json.dumps(parsed))
+                except Exception:
+                    body_literal = json.dumps(processed_body)
         else:
             body_literal = "null"
 
@@ -543,22 +553,51 @@ const csvData = new SharedArray("csvData", function () {{
         }}
 """
 
-        # ── Variable extraction ─────────────────────────────────────────────
+        # ── Variable extraction (JMeter JSON Extractor equivalent) ────────────
         if step.get("extractVariable") and step.get("variableName"):
             var_name = step["variableName"].strip()
-            json_path = step.get("jsonPath", "").strip()
+            raw_path = step.get("jsonPath", "").strip()
 
-            if json_path:
-                if json_path.startswith("$."):
-                    json_path = json_path[2:]
+            if raw_path:
+                clean_path = raw_path.replace("$.", "").replace("$", "")
+                import re
+                gjson_path = re.sub(r'\[(\d+)\]', r'.\1', clean_path).strip(".")
 
                 requests += f"""
-        // Extract variable: {var_name}
+        // Extract variable: {var_name} (JMeter JSON Extractor)
         try {{
-            variables.{var_name} = {response_var}.json("{json_path}");
-            console.log("Extracted {var_name} =", variables.{var_name});
+            let __extracted_{index} = undefined;
+            try {{
+                __extracted_{index} = {response_var}.json("{gjson_path}");
+            }} catch (_) {{}}
+
+            if (__extracted_{index} === undefined || __extracted_{index} === null) {{
+                try {{
+                    const __b_{index} = {response_var}.json();
+                    if (__b_{index}) {{
+                        const __keys_{index} = "{gjson_path}".split(".").filter(Boolean);
+                        let __cur_{index} = __b_{index};
+                        for (const __k of __keys_{index}) {{
+                            if (__cur_{index} && typeof __cur_{index} === "object" && __k in __cur_{index}) {{
+                                __cur_{index} = __cur_{index}[__k];
+                            }} else {{
+                                __cur_{index} = undefined;
+                                break;
+                            }}
+                        }}
+                        __extracted_{index} = __cur_{index};
+                    }}
+                }} catch (_) {{}}
+            }}
+
+            if (__extracted_{index} !== undefined && __extracted_{index} !== null) {{
+                variables.{var_name} = typeof __extracted_{index} === "object" ? JSON.stringify(__extracted_{index}) : String(__extracted_{index});
+                console.log("Extracted {var_name} =", variables.{var_name});
+            }} else {{
+                console.warn("Variable {var_name} not found with path {raw_path}");
+            }}
         }} catch (e) {{
-            console.warn("Failed to extract {var_name} from path {json_path}:", e.message);
+            console.warn("Failed to extract {var_name}:", e.message);
         }}
 """
 
@@ -748,12 +787,19 @@ def execute_k6(script_path, run_id, on_process_created=None):
         f"run_id={run_id}",
     ]
 
+    # Native Grafana Live Web Dashboard: streams real-time latency, RPS, VUs without InfluxDB
+    dashboard_html_path = os.path.abspath(f"{REPORT_FOLDER}/{run_id}_dashboard.html")
+    k6_cmd.extend([
+        "--out",
+        f"web-dashboard=port=5665&export={dashboard_html_path}"
+    ])
+
     # Telemetry streaming: dynamically verify InfluxDB before attaching output
     if is_influxdb_available():
-        print(f"[k6] InfluxDB on localhost:8086 is ONLINE. Streaming metrics for Grafana live view.")
+        print(f"[k6] InfluxDB on localhost:8086 is ONLINE. Also streaming metrics to InfluxDB.")
         k6_cmd.extend(["--out", "influxdb=http://localhost:8086/k6?pushInterval=5s"])
     else:
-        print(f"[k6] InfluxDB on localhost:8086 is OFFLINE. Running with local summary export.")
+        print(f"[k6] InfluxDB offline. Streaming live telemetry via native Grafana Web Dashboard on http://localhost:5665.")
 
     k6_cmd.extend([
         "--summary-export",

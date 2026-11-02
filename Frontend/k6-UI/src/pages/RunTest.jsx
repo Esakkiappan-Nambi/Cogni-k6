@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   PlayCircle, Loader2, Trash2, Pencil, Search, Square,
   ExternalLink, FileText, Copy, Check, Terminal,
-  AlertTriangle, RefreshCw, Plus, Activity,
-  ChevronLeft, ChevronRight,
+  AlertTriangle, RefreshCw, Plus, Activity, BarChart3,
+  ChevronLeft, ChevronRight, Users, Clock,
+  ArrowUp, ArrowDown, ArrowUpDown, Gauge, CheckCircle2,
 } from "lucide-react";
 import API from "../services/api";
 import { toast } from "react-toastify";
@@ -92,11 +93,25 @@ export default function RunTest() {
   const [search,         setSearch]         = useState("");
   const [copied,         setCopied]         = useState(false);
   const [page,           setPage]           = useState(1);
+  const [sortBy,         setSortBy]         = useState("created_at");
+  const [sortOrder,      setSortOrder]      = useState("desc");
+  const [activeTab,      setActiveTab]      = useState("k6"); // "k6" | "grafana"
   const [telemetry,      setTelemetry]      = useState({
     grafana_online: false, influxdb_online: false,
+    k6_dashboard_online: true,
+    k6_web_dashboard_url: "http://localhost:5665",
     grafana_base_url: "http://localhost:3000",
     grafana_dashboard_path: "/d/adfqsh7/k6-load-testing-results",
   });
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortOrder(field === "test_name" ? "asc" : "desc");
+    }
+  };
 
   const pollRef   = useRef(null);
   const autoRef   = useRef(null);
@@ -228,10 +243,35 @@ export default function RunTest() {
     toast.success("Copied to clipboard");
   };
 
-  /* ── derived ──────────────────────────────────────────────── */
-  const filtered    = tests.filter((t) =>
-    t.test_name.toLowerCase().includes(search.toLowerCase())
-  );
+  /* ── derived with enterprise sorting ───────────────────────── */
+  const sortedTests = useMemo(() => {
+    return [...tests].sort((a, b) => {
+      let aVal = a[sortBy];
+      let bVal = b[sortBy];
+
+      if (sortBy === "created_at") {
+        aVal = new Date(aVal || 0).getTime();
+        bVal = new Date(bVal || 0).getTime();
+      } else if (sortBy === "test_name" || sortBy === "status") {
+        aVal = (aVal || "").toString().toLowerCase();
+        bVal = (bVal || "").toString().toLowerCase();
+      } else {
+        aVal = Number(aVal || 0);
+        bVal = Number(bVal || 0);
+      }
+
+      if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [tests, sortBy, sortOrder]);
+
+  const filtered    = useMemo(() => {
+    return sortedTests.filter((t) =>
+      t.test_name.toLowerCase().includes(search.toLowerCase())
+    );
+  }, [sortedTests, search]);
+
   const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage    = Math.min(page, totalPages);
   const paginated   = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -246,7 +286,7 @@ export default function RunTest() {
           ═══════════════════════════════════════════════════ */}
       <div className="page-header">
         <div className="page-header-left">
-          <div className="page-header-title">Run &amp; Live Monitoring</div>
+          <div className="page-header-title">Run & Live Monitoring</div>
           <div className="page-header-sub">Execute test scenarios and stream live terminal telemetry</div>
         </div>
         <div className="page-header-right">
@@ -276,11 +316,18 @@ export default function RunTest() {
                 <h4>Test #{runningTestId} is currently executing…</h4>
                 <p>
                   Run ID: <strong>#{activeRunId || "—"}</strong> ·
-                  Streaming metrics live to InfluxDB &amp; Grafana
+                  Real-time metrics streaming on <strong>http://localhost:5665</strong> (Zero InfluxDB required)
                 </p>
               </div>
             </div>
             <div className="rt-run-banner-actions">
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => window.open("http://localhost:5665", "_blank")}
+                style={{ background: "#4f46e5", color: "#fff" }}
+              >
+                <Gauge size={13} /> k6 Live Dashboard (5665)
+              </button>
               {activeRunId && (
                 <button
                   className="btn btn-outline btn-sm"
@@ -308,7 +355,7 @@ export default function RunTest() {
               <Activity size={20} />
             </div>
             <div>
-              <div className="rt-hub-title">Run &amp; Monitor Hub</div>
+              <div className="rt-hub-title">Run & Monitor Hub</div>
               <div className="rt-hub-sub">
                 Execute load scenarios, monitor live execution, and view k6 output logs
               </div>
@@ -322,6 +369,28 @@ export default function RunTest() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+            </div>
+            <div className="sort-badge-wrap" title="Sort test scenarios">
+              <ArrowUpDown size={13} className="sort-badge-icon" />
+              <select
+                className="sort-select-modern"
+                value={`${sortBy}-${sortOrder}`}
+                onChange={(e) => {
+                  const [f, o] = e.target.value.split("-");
+                  setSortBy(f);
+                  setSortOrder(o);
+                }}
+              >
+                <option value="created_at-desc">Newest First</option>
+                <option value="created_at-asc">Oldest First</option>
+                <option value="test_name-asc">Name (A → Z)</option>
+                <option value="test_name-desc">Name (Z → A)</option>
+                <option value="users-desc">VUs (High → Low)</option>
+                <option value="users-asc">VUs (Low → High)</option>
+                <option value="duration-desc">Duration (Longest)</option>
+                <option value="duration-asc">Duration (Shortest)</option>
+                <option value="status-asc">Status</option>
+              </select>
             </div>
             <button className="btn btn-ghost btn-sm" onClick={() => loadTests()}>
               <RefreshCw size={13} /> Refresh
@@ -354,12 +423,36 @@ export default function RunTest() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Scenario Name</th>
-                    <th>Workload</th>
-                    <th>Duration</th>
-                    <th>Status</th>
-                    <th>Created</th>
+                    <th className="sortable" onClick={() => handleSort("id")} title="Click to sort by ID">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        ID {sortBy === "id" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("test_name")} title="Click to sort by Name">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Scenario Name {sortBy === "test_name" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("users")} title="Click to sort by VUs">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Workload {sortBy === "users" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("duration")} title="Click to sort by Duration">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Duration {sortBy === "duration" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("status")} title="Click to sort by Status">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Status {sortBy === "status" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("created_at")} title="Click to sort by Created Date">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Created {sortBy === "created_at" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
                     <th style={{ textAlign: "center" }}>Run</th>
                     <th style={{ textAlign: "center" }}>Manage</th>
                   </tr>
@@ -370,14 +463,21 @@ export default function RunTest() {
                       key={t.id}
                       className={runningTestId === t.id ? "row-running" : ""}
                     >
-                      <td style={{ color: "var(--tx3)", fontSize: 12, fontWeight: 600 }}>
+                      <td style={{ color: "var(--tx3)", fontSize: 12, fontWeight: 700, fontFamily: "'Consolas', monospace" }}>
                         #{t.id}
                       </td>
-                      <td style={{ fontWeight: 600 }}>{t.test_name}</td>
                       <td>
-                        <span className="vu-chip">{t.users} VUs</span>
+                        <div style={{ fontWeight: 600, color: "var(--tx)" }}>{t.test_name}</div>
+                        <div style={{ fontSize: 11, color: "var(--tx3)" }}>k6 load test scenario</div>
                       </td>
-                      <td style={{ color: "var(--tx2)" }}>{t.duration}s</td>
+                      <td>
+                        <span className="vu-chip"><Users size={11} /> {t.users} VUs</span>
+                      </td>
+                      <td>
+                        <span style={{ color: "var(--tx2)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <Clock size={11} color="var(--tx3)" /> {t.duration}s
+                        </span>
+                      </td>
                       <td>
                         <span className={statusBadge(t.status)}>
                           {(t.status === "running" || t.status === "stopping") && (
@@ -418,6 +518,13 @@ export default function RunTest() {
                       {/* Manage */}
                       <td style={{ textAlign: "center" }}>
                         <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                          <button
+                            className="btn btn-ghost btn-icon btn-sm"
+                            title="View Reports & History"
+                            onClick={() => navigate("/history")}
+                          >
+                            <BarChart3 size={13} />
+                          </button>
                           <button
                             className="btn btn-ghost btn-icon btn-sm"
                             title="Edit scenario"
@@ -469,28 +576,45 @@ export default function RunTest() {
           )}
         </div>
 
-        {/* ── Grafana embed ── */}
-        {grafanaUrl && (
+        {/* ── Enterprise Live Telemetry (Native k6 Dashboard + Grafana) ── */}
+        {(runningTestId || activeRunId || grafanaUrl) && (
           <div className="rt-grafana-card">
             <div className="rt-grafana-hdr">
               <div className="rt-grafana-hdr-left">
                 <div
                   className="pulse-anim"
-                  style={{ color: "var(--brand-l)", display: "flex", alignItems: "center" }}
+                  style={{ color: "#22c55e", display: "flex", alignItems: "center" }}
                 >
                   <Activity size={18} />
                 </div>
                 <div>
-                  <h3>Grafana Live Telemetry</h3>
-                  <p>Real-time metrics stream for Run #{activeRunId}</p>
+                  <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    Live Performance Telemetry
+                    <span style={{ fontSize: 11, background: "#22c55e20", color: "#22c55e", padding: "2px 8px", borderRadius: 12, fontWeight: 600 }}>LIVE</span>
+                  </h3>
+                  <p>Real-time RPS, latency percentiles, and virtual users · Run #{activeRunId || "Active"}</p>
                 </div>
               </div>
               <div className="rt-grafana-hdr-right">
+                <div style={{ display: "flex", gap: 4, background: "var(--bg3)", padding: 3, borderRadius: 6, border: "1px solid var(--border)" }}>
+                  <button
+                    className={`btn btn-sm ${activeTab === "k6" ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => setActiveTab("k6")}
+                  >
+                    <Gauge size={12} /> k6 Dashboard (Native)
+                  </button>
+                  <button
+                    className={`btn btn-sm ${activeTab === "grafana" ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => setActiveTab("grafana")}
+                  >
+                    <BarChart3 size={12} /> Grafana View
+                  </button>
+                </div>
                 <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => window.open(grafanaUrl.replace("&kiosk=tv", ""), "_blank")}
+                  className="btn btn-outline btn-sm"
+                  onClick={() => window.open(activeTab === "k6" ? "http://localhost:5665" : grafanaUrl.replace("&kiosk=tv", ""), "_blank")}
                 >
-                  <ExternalLink size={13} /> Open in New Tab
+                  <ExternalLink size={13} /> Open Tab
                 </button>
                 {activeRunId && (
                   <button
@@ -503,22 +627,46 @@ export default function RunTest() {
               </div>
             </div>
             <div className="rt-grafana-body">
-              <iframe
-                src={grafanaUrl}
-                width="100%"
-                height="460px"
-                style={{ border: "none", borderRadius: 8 }}
-                title="Grafana Dashboard"
-              />
-              <div className="rt-grafana-note">
-                <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-                <span>
-                  If the dashboard is blank, enable{" "}
-                  <code style={{ fontFamily: "monospace", fontSize: 11 }}>allow_embedding = true</code>{" "}
-                  in <code style={{ fontFamily: "monospace", fontSize: 11 }}>grafana.ini</code>, or
-                  click "Open in New Tab".
-                </span>
-              </div>
+              {activeTab === "k6" ? (
+                <div>
+                  <iframe
+                    src="http://localhost:5665"
+                    width="100%"
+                    height="480px"
+                    style={{ border: "none", borderRadius: 8, background: "#0e1117" }}
+                    title="k6 Native Live Dashboard"
+                  />
+                  <div className="rt-grafana-note" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <CheckCircle2 size={14} style={{ color: "#22c55e" }} />
+                      Streaming directly from k6 native engine on port 5665. <strong>No InfluxDB required.</strong>
+                    </span>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 11 }}
+                      onClick={() => window.open("http://localhost:5665", "_blank")}
+                    >
+                      Pop out dashboard ↗
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <iframe
+                    src={grafanaUrl || "http://localhost:3000"}
+                    width="100%"
+                    height="460px"
+                    style={{ border: "none", borderRadius: 8 }}
+                    title="Grafana Dashboard"
+                  />
+                  <div className="rt-grafana-note">
+                    <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>
+                      Grafana view streams from port 3000. For zero-config instant streaming without InfluxDB, switch to the <strong>k6 Dashboard (Native)</strong> tab above.
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -528,8 +676,13 @@ export default function RunTest() {
           <div className="rt-terminal-card">
             <div className="rt-terminal-hdr">
               <div className="rt-terminal-hdr-left">
-                <Terminal size={15} />
-                <span>Execution Output &amp; k6 Console</span>
+                <span style={{ display: "flex", gap: 5, marginRight: 8 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f43f5e", display: "inline-block" }} />
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
+                </span>
+                <Terminal size={14} style={{ color: "var(--brand-l)" }} />
+                <span>k6-runtime-telemetry.log</span>
               </div>
               <div className="rt-terminal-hdr-right">
                 <button className="btn btn-ghost btn-sm" onClick={copyOutput}>

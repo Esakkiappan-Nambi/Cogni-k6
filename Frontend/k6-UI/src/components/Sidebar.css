@@ -177,3 +177,31 @@
   display: flex; align-items: center;
 }
 .sb-logout:hover { color: var(--red-text); background: var(--red-dim); }
+
+/* ── Theme Toggle in Sidebar ── */
+.sb-theme-toggle-row {
+  padding: 8px 12px;
+  border-top: 1px solid var(--sb-border, var(--sidebar-border, rgba(255,255,255,0.08)));
+}
+
+.sb-theme-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r, 6px);
+  color: var(--tx, #f8fafc);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.sb-theme-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(99, 102, 241, 0.4);
+}

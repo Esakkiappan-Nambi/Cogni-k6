@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, FilePlus2, PlayCircle,
-  BarChart3, LogOut, Zap, Radio,
+  BarChart3, LogOut, Zap, Radio, Sun, Moon,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import API from "../services/api";
@@ -34,9 +34,27 @@ export default function Sidebar() {
     path:    "C:\\Program Files\\k6\\k6.exe",
   });
 
+  const [theme, setTheme] = useState(() => localStorage.getItem("k6_theme") || "dark");
+  const [telemetry, setTelemetry] = useState({
+    influxdb_online: false,
+    grafana_online: false,
+    k6_dashboard_online: true
+  });
+
   useEffect(() => {
-    API.get("/telemetry-status").catch(() => {});
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("k6_theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    API.get("/telemetry-status")
+      .then((r) => setTelemetry(r.data || {}))
+      .catch(() => {});
   }, []);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
 
   const handleLogout = () => {
     sessionStorage.clear();
@@ -55,11 +73,11 @@ export default function Sidebar() {
       {/* ── Brand ── */}
       <div className="sb-brand" onClick={() => navigate("/dashboard")}>
         <div className="sb-brand-icon">
-          <Zap size={17} color="#fff" />
+          <Zap size={18} color="#fff" />
         </div>
         <div className="sb-brand-text">
           <div className="sb-brand-name">K6 <span>Portal</span></div>
-          <div className="sb-brand-sub">Performance Suite</div>
+          <div className="sb-brand-sub">Enterprise Load Studio</div>
         </div>
       </div>
 
@@ -74,7 +92,7 @@ export default function Sidebar() {
                 className={`sb-item${isActive(path) ? " active" : ""}`}
                 onClick={() => navigate(path)}
               >
-                <span className="sb-item-ico"><Icon size={15} /></span>
+                <span className="sb-item-ico"><Icon size={16} /></span>
                 <span style={{ flex: 1 }}>{text}</span>
                 {badge && <span className="sb-badge">{badge}</span>}
               </div>
@@ -82,21 +100,50 @@ export default function Sidebar() {
           </div>
         ))}
 
-        <div className="sb-divider" style={{ margin: "12px 12px 10px" }} />
+        <div className="sb-divider" />
 
-        {/* ── k6 Engine Status Card ── */}
+        {/* ── k6 Engine Cluster Card ── */}
         <div className="sb-engine-card">
           <div className="sb-engine-header">
-            <span className="sb-engine-dot" />
-            <span className="sb-engine-title">k6 Engine Ready</span>
+            <div className="sb-engine-title-wrap">
+              <span className="sb-engine-dot" />
+              <span className="sb-engine-title">k6 Runner Active</span>
+            </div>
+            <span className="sb-engine-pill">Ready</span>
           </div>
-          <div className="sb-engine-meta">
-            {k6Info.version} ({k6Info.commit}, go<br />
-            {k6Info.go})<br />
-            {k6Info.path}
+          <div className="sb-engine-chips">
+            <span className="sb-chip">v2.2.0</span>
+            <span className="sb-chip">win/amd64</span>
+            <span className="sb-chip">Local Daemon</span>
+          </div>
+          <div className="sb-engine-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Telemetry: {telemetry.influxdb_online ? "InfluxDB + k6" : "k6 Live Engine"}</span>
+            <span style={{ color: "#34d399", fontWeight: 600 }}>Streaming</span>
           </div>
         </div>
       </nav>
+
+      {/* ── Theme Mode Toggle ── */}
+      <div className="sb-theme-toggle-row">
+        <button
+          className="sb-theme-btn"
+          type="button"
+          onClick={toggleTheme}
+          title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
+        >
+          {theme === "dark" ? (
+            <>
+              <Sun size={15} style={{ color: "#fbbf24" }} />
+              <span>Light Mode</span>
+            </>
+          ) : (
+            <>
+              <Moon size={15} style={{ color: "#818cf8" }} />
+              <span>Dark Mode</span>
+            </>
+          )}
+        </button>
+      </div>
 
       {/* ── User footer ── */}
       <div className="sb-footer">

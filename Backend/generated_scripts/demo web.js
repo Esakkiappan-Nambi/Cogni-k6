@@ -16,6 +16,10 @@ export const options = {
         { duration: "25s", target: 20 },
         { duration: "5s", target: 0 },
     ],
+    thresholds: {
+        'http_req_duration': ['p(95)<2000'],
+        'http_req_failed': ['rate<=0.0100'],
+    }
 };
 
 export default function () {
@@ -31,11 +35,50 @@ export default function () {
         
         
 
-        // ── Computers data ──
-        let res_0 = http.get(`https://demowebshop.tricentis.com/computers`, {
+        // ── Computers data (with retry logic) ──
+        let res_0;
+        {
+            const __retryCodes_0 = [500, 502, 503];
+            const __maxRetries_0 = 3;
+            const __retryDelay_0 = 1000;
+            const __retryOnTimeout_0 = true;
+
+            for (let __attempt_0 = 0; __attempt_0 <= __maxRetries_0; __attempt_0++) {
+                try {
+                    res_0 = http.get(`https://demowebshop.tricentis.com/computers`, {
             headers: {},
             
         });
+
+                    if (!__retryCodes_0.includes(res_0.status)) {
+                        if (__attempt_0 > 0) {
+                            console.log("Retry succeeded for Computers data on attempt", __attempt_0 + 1);
+                        }
+                        break;
+                    }
+
+                    if (__attempt_0 < __maxRetries_0) {
+                        console.warn(
+                            "Retrying Computers data (attempt", __attempt_0 + 1, "of", __maxRetries_0,
+                            ") — status:", res_0.status
+                        );
+                        sleep(__retryDelay_0 / 1000);
+                    } else {
+                        console.error("Computers data failed after", __maxRetries_0, "retries — status:", res_0.status);
+                    }
+                } catch (__err_0) {
+                    if (__retryOnTimeout_0 && __attempt_0 < __maxRetries_0) {
+                        console.warn(
+                            "Retrying Computers data after error (attempt", __attempt_0 + 1, "):", __err_0.message
+                        );
+                        sleep(__retryDelay_0 / 1000);
+                    } else {
+                        console.error("Computers data network error after retries:", __err_0.message);
+                        throw __err_0;
+                    }
+                }
+            }
+        }
 
         console.log("Request: Computers data");
         console.log("Status:", res_0.status);
@@ -51,8 +94,8 @@ export default function () {
         }
 
         check(res_0, {
-            "status 200": (r) => r.status === 200,
-            "response time < 2000ms": (r) => r.timings.duration <= 2000
+            "Computers data status 200": (r) => r.status === 200,
+            "Computers data response time < 500ms": (r) => r.timings.duration <= 500
         });
 
         // ── Desktops ──

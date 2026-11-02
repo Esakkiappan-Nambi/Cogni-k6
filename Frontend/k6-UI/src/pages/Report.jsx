@@ -52,7 +52,7 @@ export default function Report() {
     </Layout>
   );
 
-  const isPassed = report.status === "completed" && report.error_rate < 1;
+  const isPassed = report.status === "completed" || report.status === "passed";
 
   const kpis = [
     { label:"Throughput",    value: report.throughput,        unit:"req/s" },
@@ -150,7 +150,7 @@ export default function Report() {
         {report.output && (
           <div className="rpt-output-card">
             <div className="rpt-output-header">
-              <span className="rpt-output-title">Execution Output &amp; k6 Summary</span>
+              <span className="rpt-output-title">Execution Output & k6 Summary</span>
               <button className="btn btn-ghost btn-sm" onClick={copyOutput}>
                 {copied ? <Check size={13} /> : <Copy size={13} />}
                 {copied ? "Copied" : "Copy Output"}

@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
 import API from "../services/api";
 import {
   Trash2, Search, ExternalLink, FileText,
   BarChart3, Plus, ChevronLeft, ChevronRight, Loader2,
+  ArrowUpDown, ArrowUp, ArrowDown, Gauge,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
@@ -74,6 +75,21 @@ export default function History() {
   const [search,  setSearch]  = useState("");
   const [loading, setLoading] = useState(true);
   const [page,    setPage]    = useState(1);
+  const [sortBy,  setSortBy]  = useState("started_at");
+  const [sortOrder, setSortOrder] = useState("desc");
+  const [telemetry, setTelemetry] = useState({
+    grafana_online: false,
+    influxdb_online: false,
+  });
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortOrder(field === "test_name" ? "asc" : "desc");
+    }
+  };
 
   const fetchRuns = useCallback(async () => {
     setLoading(true);
@@ -89,6 +105,12 @@ export default function History() {
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
+  useEffect(() => {
+    API.get("/telemetry-status")
+      .then((r) => setTelemetry(r.data || {}))
+      .catch(() => {});
+  }, []);
+
   // Reset to page 1 when search changes
   useEffect(() => { setPage(1); }, [search]);
 
@@ -103,9 +125,34 @@ export default function History() {
     }
   };
 
-  const filtered   = runs.filter((r) =>
-    (r.test_name || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const sortedRuns = useMemo(() => {
+    return [...runs].sort((a, b) => {
+      let aVal = a[sortBy];
+      let bVal = b[sortBy];
+
+      if (sortBy === "started_at") {
+        aVal = new Date(aVal || 0).getTime();
+        bVal = new Date(bVal || 0).getTime();
+      } else if (sortBy === "test_name" || sortBy === "status") {
+        aVal = (aVal || "").toString().toLowerCase();
+        bVal = (bVal || "").toString().toLowerCase();
+      } else {
+        aVal = Number(aVal || 0);
+        bVal = Number(bVal || 0);
+      }
+
+      if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [runs, sortBy, sortOrder]);
+
+  const filtered   = useMemo(() => {
+    return sortedRuns.filter((r) =>
+      (r.test_name || "").toLowerCase().includes(search.toLowerCase())
+    );
+  }, [sortedRuns, search]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);
   const paginated  = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -117,7 +164,7 @@ export default function History() {
           ═══════════════════════════════════════════════════ */}
       <div className="page-header">
         <div className="page-header-left">
-          <div className="page-header-title">Execution History &amp; Reports</div>
+          <div className="page-header-title">Execution History & Reports</div>
           <div className="page-header-sub">
             Audited records of past k6 runs, latency breakdowns, and diagnostics
           </div>
@@ -147,20 +194,42 @@ export default function History() {
         }}>
           <div>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--tx)", marginBottom: 4 }}>
-              Execution History &amp; Diagnostics
+              Execution History & Diagnostics
             </h2>
             <p style={{ fontSize: 13, color: "var(--tx2)" }}>
               Browse past performance runs, view reports, or open Grafana dashboards
             </p>
           </div>
-          <div className="search-box">
-            <Search size={14} className="search-ico" />
-            <input
-              placeholder="Search by scenario name…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 260 }}
-            />
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="search-box">
+              <Search size={14} className="search-ico" />
+              <input
+                placeholder="Search by scenario name…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: 240 }}
+              />
+            </div>
+            <div className="sort-badge-wrap" title="Sort execution history">
+              <ArrowUpDown size={13} className="sort-badge-icon" />
+              <select
+                className="sort-select-modern"
+                value={`${sortBy}-${sortOrder}`}
+                onChange={(e) => {
+                  const [f, o] = e.target.value.split("-");
+                  setSortBy(f);
+                  setSortOrder(o);
+                }}
+              >
+                <option value="started_at-desc">Newest First</option>
+                <option value="started_at-asc">Oldest First</option>
+                <option value="id-desc">Run ID (High → Low)</option>
+                <option value="id-asc">Run ID (Low → High)</option>
+                <option value="test_name-asc">Name (A → Z)</option>
+                <option value="test_name-desc">Name (Z → A)</option>
+                <option value="status-asc">Status</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -186,11 +255,27 @@ export default function History() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Run ID</th>
-                    <th>Scenario Name</th>
-                    <th>Status</th>
-                    <th>Executed At</th>
-                    <th style={{ textAlign: "center" }}>Diagnostics</th>
+                    <th className="sortable" onClick={() => handleSort("id")} title="Click to sort by Run ID">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Run ID {sortBy === "id" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("test_name")} title="Click to sort by Name">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Scenario Name {sortBy === "test_name" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("status")} title="Click to sort by Status">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Status {sortBy === "status" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th className="sortable" onClick={() => handleSort("started_at")} title="Click to sort by Date">
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        Executed At {sortBy === "started_at" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </div>
+                    </th>
+                    <th style={{ textAlign: "center" }}>Diagnostics & Telemetry</th>
                     <th style={{ textAlign: "center" }}>Del</th>
                   </tr>
                 </thead>
@@ -215,20 +300,31 @@ export default function History() {
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => navigate(`/report/${r.id}`)}
+                            title="View Full Execution & SLA Report"
                           >
                             <BarChart3 size={12} /> Report
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
-                            onClick={() =>
-                              window.open(
-                                `http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${r.id}&from=now-1h&to=now`,
-                                "_blank"
-                              )
-                            }
+                            onClick={() => window.open(`http://localhost:8000/dashboard-report/${r.id}`, "_blank")}
+                            title="View Standalone Live Dashboard (Zero InfluxDB Required)"
                           >
-                            <ExternalLink size={12} /> Grafana
+                            <Gauge size={12} /> Dashboard
                           </button>
+                          {telemetry.grafana_online && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() =>
+                                window.open(
+                                  `http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${r.id}&from=now-1h&to=now`,
+                                  "_blank"
+                                )
+                              }
+                              title="Open in Grafana"
+                            >
+                              <ExternalLink size={12} /> Grafana
+                            </button>
+                          )}
                         </div>
                       </td>
                       <td style={{ textAlign: "center" }}>

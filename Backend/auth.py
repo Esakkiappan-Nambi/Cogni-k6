@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from passlib.context import CryptContext
+import bcrypt
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException
@@ -26,12 +26,6 @@ if not SECRET_KEY:
     raise ValueError("SECRET_KEY not found in .env")
 
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto"
-)
-
-
 def get_db():
     db = SessionLocal()
     try:
@@ -40,19 +34,23 @@ def get_db():
         db.close()
 
 
-# Password Hashing
-def hash_password(password: str):
-    return pwd_context.hash(password)
+# Password Hashing & Verification (Directly using bcrypt with 72-byte truncation)
+def hash_password(password: str) -> str:
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 
 def verify_password(
     plain_password: str,
     hashed_password: str
-):
-    return pwd_context.verify(
-        plain_password,
-        hashed_password
-    )
+) -> bool:
+    try:
+        pwd_bytes = plain_password.encode("utf-8")[:72]
+        hash_bytes = hashed_password.encode("utf-8")
+        return bcrypt.checkpw(pwd_bytes, hash_bytes)
+    except Exception:
+        return False
 
 
 # Create JWT Token

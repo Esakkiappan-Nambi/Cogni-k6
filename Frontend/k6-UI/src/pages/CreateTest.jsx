@@ -2,7 +2,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import React, { useState, useEffect, useRef } from "react";
 import { GripVertical, Clock, Globe, Zap, Edit3, Info, Play, ChevronDown, ChevronUp, Search, Link2, Loader2, AlertCircle, Activity, Plus as PlusIcon } from "lucide-react";
 import API from "../services/api";
-import { FilePlus, PlayCircle, ArrowLeft, Plus, Trash2, Copy } from "lucide-react";
+import { FilePlus, PlayCircle, ArrowLeft, Plus, Trash2, Copy, KeyRound, Shield, Lock, User, Eye, EyeOff, CheckCircle } from "lucide-react";
 import { toast } from "react-toastify";
 import "./CreateTest.css";
 import Layout from "../components/Layout";
@@ -147,8 +147,22 @@ function CreateTest() {
   const [captureLoading, setCaptureLoading] = useState(false);
 
   const [capturedScenario, setCapturedScenario] = useState([]);
-
   const [captureError, setCaptureError]     = useState("");
+
+  // ── Authenticated Capture state ───────────────────────────────────────────
+  const [captureAuthMode, setCaptureAuthMode]           = useState("public"); // "public" | "auth"
+  const [authLoginUrl, setAuthLoginUrl]                 = useState("");
+  const [authUsername, setAuthUsername]                 = useState("");
+  const [authPassword, setAuthPassword]                 = useState("");
+  const [authShowPassword, setAuthShowPassword]         = useState(false);
+  const [authAppUrl, setAuthAppUrl]                     = useState("");
+  const [authUsernameSelector, setAuthUsernameSelector] = useState("");
+  const [authPasswordSelector, setAuthPasswordSelector] = useState("");
+  const [authSubmitSelector, setAuthSubmitSelector]     = useState("");
+  const [authSuccessUrl, setAuthSuccessUrl]             = useState("");
+  const [authLoginTimeout, setAuthLoginTimeout]         = useState(15000);
+  const [authShowAdvanced, setAuthShowAdvanced]         = useState(false);
+  const [authCaptureMeta, setAuthCaptureMeta]           = useState(null);
   
   const [captureOpts, setCaptureOpts]       = useState({
     wait_ms: 6000,
@@ -297,27 +311,81 @@ function CreateTest() {
   // ── Auto Capture handlers ─────────────────────────────────────────────────
 
   const handleCapture = async () => {
-    if (!captureUrl.trim()) {
-      toast.error("Please enter a URL to capture");
-      return;
-    }
-    setCaptureLoading(true);
-    setCaptureError("");
-    setCapturedScenario([]);
+    if (captureAuthMode === "public") {
+      if (!captureUrl.trim()) {
+        toast.error("Please enter a URL to capture");
+        return;
+      }
+      setCaptureLoading(true);
+      setCaptureError("");
+      setCapturedScenario([]);
+      setAuthCaptureMeta(null);
 
-    try {
-      const res = await API.post("/auto-capture", {
-        url: captureUrl.trim(),
-        ...captureOpts,
-      });
-      setCapturedScenario(res.data.scenario);
-      toast.success(`Captured ${res.data.count} API call(s) from ${captureUrl}`);
-    } catch (err) {
-      const msg = err.response?.data?.detail || "Capture failed. Check the URL and try again.";
-      setCaptureError(msg);
-      toast.error(msg);
-    } finally {
-      setCaptureLoading(false);
+      try {
+        const res = await API.post("/auto-capture", {
+          url: captureUrl.trim(),
+          ...captureOpts,
+        });
+        setCapturedScenario(res.data.scenario);
+        toast.success(`Captured ${res.data.count} API call(s) from ${captureUrl}`);
+      } catch (err) {
+        const msg = err.response?.data?.detail || "Capture failed. Check the URL and try again.";
+        setCaptureError(msg);
+        toast.error(msg);
+      } finally {
+        setCaptureLoading(false);
+      }
+    } else {
+      // Authenticated capture
+      if (!authLoginUrl.trim()) {
+        toast.error("Please enter the login page URL");
+        return;
+      }
+      if (!authUsername.trim() || !authPassword.trim()) {
+        toast.error("Please provide both username and password");
+        return;
+      }
+      setCaptureLoading(true);
+      setCaptureError("");
+      setCapturedScenario([]);
+      setAuthCaptureMeta(null);
+
+      try {
+        const postAppUrls = authAppUrl.trim()
+          ? authAppUrl.split(",").map((u) => u.trim()).filter(Boolean)
+          : [authLoginUrl.trim()];
+
+        const res = await API.post("/authenticated-capture", {
+          login_url: authLoginUrl.trim(),
+          username: authUsername.trim(),
+          password: authPassword.trim(),
+          app_url: postAppUrls,
+          username_selector: authUsernameSelector.trim() || null,
+          password_selector: authPasswordSelector.trim() || null,
+          submit_selector: authSubmitSelector.trim() || null,
+          success_url_contains: authSuccessUrl.trim() || null,
+          login_timeout_ms: authLoginTimeout || 15000,
+          wait_ms: captureOpts.wait_ms || 8000,
+          interact: captureOpts.interact,
+          dedupe: captureOpts.dedupe,
+          inject_auth: captureOpts.inject_auth,
+        });
+
+        setCapturedScenario(res.data.scenario);
+        setAuthCaptureMeta({
+          login_success: res.data.login_success,
+          token_found: res.data.token_found,
+          cookies_count: res.data.cookies_count,
+          message: res.data.message,
+        });
+        toast.success(`Authenticated capture: ${res.data.count} API call(s) captured!`);
+      } catch (err) {
+        const msg = err.response?.data?.detail || "Authenticated capture failed. Verify credentials and selectors.";
+        setCaptureError(msg);
+        toast.error(msg);
+      } finally {
+        setCaptureLoading(false);
+      }
     }
   };
 
@@ -793,7 +861,7 @@ function CreateTest() {
           <div style={{ display:"flex",gap:8 }}>
             <button className="btn btn-ghost" onClick={() => navigate("/run-test")}>Cancel</button>
             <button className="btn btn-primary" form="ct-form" type="submit">
-              <FilePlus size={14} /> Save &amp; Proceed
+              <FilePlus size={14} /> Save & Proceed
             </button>
           </div>
         </div>
@@ -812,10 +880,10 @@ function CreateTest() {
           <Globe size={14} /> HTTP Scenario Steps ({scenario.length})
         </button>
         <button type="button" className={`ct-tab${mode === "workload" ? " active" : ""}`} onClick={() => setMode("workload")}>
-          <Activity size={14} /> Workload &amp; Execution
+          <Activity size={14} /> Workload & Execution
         </button>
         <button type="button" className={`ct-tab${mode === "engine" ? " active" : ""}`} onClick={() => setMode("engine")}>
-          <Zap size={14} /> Engine &amp; Parameters
+          <Zap size={14} /> Engine & Parameters
         </button>
         <button type="button" className={`ct-tab${mode === "auto" ? " active" : ""}`} onClick={() => setMode("auto")}>
           <Search size={14} /> Auto Capture
@@ -827,37 +895,222 @@ function CreateTest() {
 
       {mode === "auto" && (
         <div className="create-form">
-          <p className="section-label"><Globe size={13} /> Application URL</p>
-          <div className="capture-url-row">
-            <input
-              type="url"
-              className="capture-url-input"
-              placeholder="https://your-app.com"
-              value={captureUrl}
-              onChange={(e) => setCaptureUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCapture()}
-            />
-            <button type="button" className="capture-btn" onClick={handleCapture} disabled={captureLoading || !captureUrl.trim()}>
-              <Zap size={14} /> {captureLoading ? "Capturing…" : "Capture APIs"}
+          {/* ── Mode selector: Public vs Authenticated ── */}
+          <div className="cap-mode-selector">
+            <button
+              type="button"
+              className={`cap-mode-pill ${captureAuthMode === "public" ? "active" : ""}`}
+              onClick={() => { setCaptureAuthMode("public"); setCaptureError(""); }}
+            >
+              <Globe size={13} /> Public Application URL
+            </button>
+            <button
+              type="button"
+              className={`cap-mode-pill ${captureAuthMode === "auth" ? "active" : ""}`}
+              onClick={() => { setCaptureAuthMode("auth"); setCaptureError(""); }}
+            >
+              <KeyRound size={13} /> Authenticated Application (Login Protected)
             </button>
           </div>
 
-          <div className="capture-options">
+          {/* ── PUBLIC CAPTURE FORM ── */}
+          {captureAuthMode === "public" && (
+            <>
+              <p className="section-label"><Globe size={13} /> Application URL</p>
+              <div className="capture-url-row">
+                <input
+                  type="url"
+                  className="capture-url-input"
+                  placeholder="https://your-app.com"
+                  value={captureUrl}
+                  onChange={(e) => setCaptureUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCapture()}
+                />
+                <button
+                  type="button"
+                  className="capture-btn"
+                  onClick={handleCapture}
+                  disabled={captureLoading || !captureUrl.trim()}
+                >
+                  <Zap size={14} /> {captureLoading ? "Capturing…" : "Capture APIs"}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── AUTHENTICATED CAPTURE FORM ── */}
+          {captureAuthMode === "auth" && (
+            <div className="auth-capture-box">
+              <div className="auth-cap-row">
+                <div className="auth-cap-field" style={{ flex: 1.2 }}>
+                  <label className="auth-cap-label">
+                    <Globe size={12} /> Login Page URL <span className="req-star">*</span>
+                  </label>
+                  <input
+                    type="url"
+                    className="capture-url-input"
+                    placeholder="https://myapp.com/login"
+                    value={authLoginUrl}
+                    onChange={(e) => setAuthLoginUrl(e.target.value)}
+                  />
+                </div>
+                <div className="auth-cap-field" style={{ flex: 1 }}>
+                  <label className="auth-cap-label">
+                    <User size={12} /> Username / Email <span className="req-star">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="capture-url-input"
+                    placeholder="admin@myapp.com"
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value)}
+                  />
+                </div>
+                <div className="auth-cap-field" style={{ flex: 1 }}>
+                  <label className="auth-cap-label">
+                    <Lock size={12} /> Password <span className="req-star">*</span>
+                  </label>
+                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <input
+                      type={authShowPassword ? "text" : "password"}
+                      className="capture-url-input"
+                      style={{ paddingRight: 36 }}
+                      placeholder="Enter password"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setAuthShowPassword(!authShowPassword)}
+                      style={{ position: "absolute", right: 8, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 4 }}
+                    >
+                      {authShowPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="auth-cap-row" style={{ marginTop: 12 }}>
+                <div className="auth-cap-field" style={{ flex: 1 }}>
+                  <label className="auth-cap-label">
+                    <Zap size={12} /> Post-Login Target URL(s) to Capture
+                    <span style={{ fontWeight: 400, color: "#94a3b8", marginLeft: 6 }}>(comma-separated if multiple)</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="capture-url-input"
+                    placeholder="https://myapp.com/dashboard, https://myapp.com/settings"
+                    value={authAppUrl}
+                    onChange={(e) => setAuthAppUrl(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="capture-btn"
+                    onClick={handleCapture}
+                    disabled={captureLoading || !authLoginUrl.trim() || !authUsername.trim() || !authPassword.trim()}
+                  >
+                    <KeyRound size={14} /> {captureLoading ? "Authenticating & Capturing…" : "Capture Authenticated APIs"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Advanced login selectors accordion */}
+              <div style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 11, color: "#818cf8", padding: "4px 8px" }}
+                  onClick={() => setAuthShowAdvanced(!authShowAdvanced)}
+                >
+                  {authShowAdvanced ? "▲ Hide Custom Selectors" : "▼ Custom CSS Selectors & URL Match (Optional)"}
+                </button>
+
+                {authShowAdvanced && (
+                  <div className="auth-advanced-grid">
+                    <div className="auth-cap-field">
+                      <label className="auth-cap-label">Username Field Selector</label>
+                      <input
+                        type="text"
+                        className="capture-url-input"
+                        placeholder="Auto-detected (or input[name=email])"
+                        value={authUsernameSelector}
+                        onChange={(e) => setAuthUsernameSelector(e.target.value)}
+                      />
+                    </div>
+                    <div className="auth-cap-field">
+                      <label className="auth-cap-label">Password Field Selector</label>
+                      <input
+                        type="text"
+                        className="capture-url-input"
+                        placeholder="Auto-detected (or input[type=password])"
+                        value={authPasswordSelector}
+                        onChange={(e) => setAuthPasswordSelector(e.target.value)}
+                      />
+                    </div>
+                    <div className="auth-cap-field">
+                      <label className="auth-cap-label">Submit Button Selector</label>
+                      <input
+                        type="text"
+                        className="capture-url-input"
+                        placeholder="Auto-detected (or button[type=submit])"
+                        value={authSubmitSelector}
+                        onChange={(e) => setAuthSubmitSelector(e.target.value)}
+                      />
+                    </div>
+                    <div className="auth-cap-field">
+                      <label className="auth-cap-label">Success URL Contains</label>
+                      <input
+                        type="text"
+                        className="capture-url-input"
+                        placeholder="e.g. /dashboard or /app"
+                        value={authSuccessUrl}
+                        onChange={(e) => setAuthSuccessUrl(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── SHARED OPTIONS ── */}
+          <div className="capture-options" style={{ marginTop: 14 }}>
             <label className="capture-option-check">
-              <input type="checkbox" checked={captureOpts.interact} onChange={(e) => setCaptureOpts((o) => ({ ...o, interact: e.target.checked }))} />
-              Interact with page (scroll + click to trigger more calls)
+              <input
+                type="checkbox"
+                checked={captureOpts.interact}
+                onChange={(e) => setCaptureOpts((o) => ({ ...o, interact: e.target.checked }))}
+              />
+              Interact with page (scroll + click navigation to trigger calls)
             </label>
             <label className="capture-option-check">
-              <input type="checkbox" checked={captureOpts.dedupe} onChange={(e) => setCaptureOpts((o) => ({ ...o, dedupe: e.target.checked }))} />
+              <input
+                type="checkbox"
+                checked={captureOpts.dedupe}
+                onChange={(e) => setCaptureOpts((o) => ({ ...o, dedupe: e.target.checked }))}
+              />
               De-duplicate identical requests
             </label>
             <label className="capture-option-check">
-              <input type="checkbox" checked={captureOpts.inject_auth} onChange={(e) => setCaptureOpts((o) => ({ ...o, inject_auth: e.target.checked }))} />
+              <input
+                type="checkbox"
+                checked={captureOpts.inject_auth}
+                onChange={(e) => setCaptureOpts((o) => ({ ...o, inject_auth: e.target.checked }))}
+              />
               Inject Authorization header skeleton
             </label>
             <label className="capture-option-check">
               Wait time (ms):
-              <input type="number" className="capture-wait-input" value={captureOpts.wait_ms} min={1000} step={500} onChange={(e) => setCaptureOpts((o) => ({ ...o, wait_ms: +e.target.value }))} />
+              <input
+                type="number"
+                className="capture-wait-input"
+                value={captureOpts.wait_ms}
+                min={1000}
+                step={500}
+                onChange={(e) => setCaptureOpts((o) => ({ ...o, wait_ms: +e.target.value }))}
+              />
             </label>
           </div>
 
@@ -868,13 +1121,33 @@ function CreateTest() {
           {captureLoading && (
             <div className="capture-loading">
               <div className="capture-spinner" />
-              Opening browser and capturing API calls from <strong>{captureUrl}</strong>…
+              {captureAuthMode === "auth"
+                ? `Launching headless browser, logging into ${authLoginUrl}, and capturing authenticated network calls…`
+                : `Opening browser and capturing API calls from ${captureUrl}…`}
+            </div>
+          )}
+
+          {/* ── Authenticated Capture Metadata Pill Banner ── */}
+          {authCaptureMeta && (
+            <div className="auth-meta-banner">
+              <span className={`auth-meta-chip ${authCaptureMeta.login_success ? "success" : "warn"}`}>
+                <CheckCircle size={12} /> Login: {authCaptureMeta.login_success ? "Verified" : "Uncertain"}
+              </span>
+              <span className="auth-meta-chip info">
+                <Globe size={12} /> Cookies Saved: {authCaptureMeta.cookies_count}
+              </span>
+              <span className={`auth-meta-chip ${authCaptureMeta.token_found ? "success" : "muted"}`}>
+                <Shield size={12} /> Bearer Token: {authCaptureMeta.token_found ? "Captured" : "Cookie-based"}
+              </span>
+              <span className="auth-meta-msg">{authCaptureMeta.message}</span>
             </div>
           )}
 
           {capturedScenario.length > 0 && (
             <>
-              <p className="section-label" style={{ marginBottom: 12 }}>Captured API calls — {capturedScenario.length} found</p>
+              <p className="section-label" style={{ marginBottom: 12 }}>
+                Captured API calls — {capturedScenario.length} found
+              </p>
               <div className="capture-table-wrapper">
                 <table className="capture-table">
                   <thead>
@@ -891,11 +1164,23 @@ function CreateTest() {
                     {capturedScenario.map((step, i) => (
                       <tr key={i} className={!step.enabled ? "capture-row-disabled" : ""}>
                         <td>{i + 1}</td>
-                        <td><input type="checkbox" checked={!!step.enabled} onChange={() => toggleCapturedStep(i)} /></td>
-                        <td><span className={`method-badge method-badge--${step.method?.toLowerCase()}`}>{step.method}</span></td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={!!step.enabled}
+                            onChange={() => toggleCapturedStep(i)}
+                          />
+                        </td>
+                        <td>
+                          <span className={`method-badge method-badge--${step.method?.toLowerCase()}`}>
+                            {step.method}
+                          </span>
+                        </td>
                         <td className="capture-url-cell">{step.url}</td>
                         <td style={{ textAlign: "center" }}>{step.body ? "✓" : "—"}</td>
-                        <td style={{ fontSize: 12, color: "#6b7280" }}>{step.extractVariable ? `→ ${step.variableName}` : "—"}</td>
+                        <td style={{ fontSize: 12, color: "#6b7280" }}>
+                          {step.extractVariable ? `→ ${step.variableName}` : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -905,18 +1190,27 @@ function CreateTest() {
                 <p className="capture-actions-hint">
                   Toggle steps on/off, then click "Import into Scenario" to move them into the manual builder and configure test settings.
                 </p>
-                <button type="button" className="submit-btn" style={{ marginTop: 0, maxWidth: 320 }} onClick={handleImportScenario}>
+                <button
+                  type="button"
+                  className="submit-btn"
+                  style={{ marginTop: 0, maxWidth: 320 }}
+                  onClick={handleImportScenario}
+                >
                   <PlayCircle size={16} /> Import into Scenario Builder
                 </button>
               </div>
             </>
           )}
 
-          {!captureLoading && !captureError && capturedScenario.length === 0 && captureUrl && (
+          {!captureLoading && !captureError && capturedScenario.length === 0 && (
             <div className="capture-empty">
               <Globe size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
               <p>No API calls captured yet.</p>
-              <p style={{ fontSize: 12, color: "#9ca3af" }}>Enter your app URL above and click "Capture APIs".</p>
+              <p style={{ fontSize: 12, color: "#9ca3af" }}>
+                {captureAuthMode === "auth"
+                  ? "Enter your login details above and click 'Capture Authenticated APIs'."
+                  : "Enter your public app URL above and click 'Capture APIs'."}
+              </p>
             </div>
           )}
         </div>
@@ -1023,7 +1317,7 @@ function CreateTest() {
 
       {(mode === "workload") && (
         <form id="ct-form" className="create-form" onSubmit={handleSubmit}>
-          <p className="section-label">Workload &amp; Execution Settings</p>
+          <p className="section-label">Workload & Execution Settings</p>
           <div className="form-grid">
             <div className="form-group"><label>Test Name</label><input type="text" name="testName" value={formData.testName} onChange={handleChange} placeholder="My Performance Test" /></div>
             <div className="form-group"><label>Virtual Users (VUs)</label><input type="number" name="users" value={formData.users} onChange={handleChange} min={1} /></div>
@@ -1040,13 +1334,13 @@ function CreateTest() {
               <div className="form-group"><label>Max Error Rate (%)</label><input type="number" name="max_error_rate" value={formData.assertions.max_error_rate} onChange={handleChange} /></div>
             </div>
           )}
-          <button type="submit" className="submit-btn"><FilePlus size={15} /> {id ? "Update Test" : "Save &amp; Proceed"}</button>
+          <button type="submit" className="submit-btn"><FilePlus size={15} /> {id ? "Update Test" : "Save & Proceed"}</button>
         </form>
       )}
 
       {(mode === "engine") && (
         <form id="ct-form" className="create-form" onSubmit={handleSubmit}>
-          <p className="section-label">Engine &amp; Parameters</p>
+          <p className="section-label">Engine & Parameters</p>
           <p className="section-label"><input type="checkbox" name="enableScheduling" checked={formData.enableScheduling} onChange={handleChange} style={{ marginRight:6 }} />Enable Scheduling (JMeter Scheduler)</p>
           {formData.enableScheduling && (
             <div className="schedule-box" style={{ background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:"var(--r2)",padding:"14px 16px",marginBottom:14 }}>
@@ -1108,133 +1402,11 @@ function CreateTest() {
               </div>
             </div>
           )}
-          <button type="submit" className="submit-btn"><FilePlus size={15} /> {id ? "Update Test" : "Save &amp; Proceed"}</button>
+          <button type="submit" className="submit-btn"><FilePlus size={15} /> {id ? "Update Test" : "Save & Proceed"}</button>
         </form>
       )}
-      {mode === "manual" && (
+            {mode === "manual" && (
         <form id="ct-form" className="create-form" onSubmit={handleSubmit}>
-          <p className="section-label">HTTP Transaction Pipeline</p>
-          <p style={{ fontSize:12, color:"var(--tx2)", marginBottom:14 }}>Drag and reorder requests to build simulated end-user journeys</p>
-            <div className="form-group"><label>Duration (sec)</label><input type="number" name="duration" value={formData.duration} onChange={handleChange} /></div>
-            <div className="form-group"><label>Loop count</label><input type="number" name="loopCount" value={formData.loopCount} onChange={handleChange} /></div>
-          </div>
-
-          {formData.enableAssertions && (
-            <div className="form-grid">
-              <div className="form-group"><label>Status Code</label><input type="number" name="status_code" value={formData.assertions.status_code} onChange={handleChange} /></div>
-              <div className="form-group"><label>Max Response Time (ms)</label><input type="number" name="max_response_time" value={formData.assertions.max_response_time} onChange={handleChange} /></div>
-              <div className="form-group"><label>Max Error Rate (%)</label><input type="number" name="max_error_rate" value={formData.assertions.max_error_rate} onChange={handleChange} /></div>
-            </div>
-          )}
-
-          <hr className="section-divider" />
-
-          <p className="section-label">
-            <input type="checkbox" name="enableScheduling" checked={formData.enableScheduling} onChange={handleChange} />
-            Enable Scheduling (like JMeter Scheduler)
-          </p>
-          {formData.enableScheduling && formData.schedule && (
-            <div className="schedule-box">
-              <div className="schedule-grid">
-                <div className="form-group"><label>Start Time</label><input type="datetime-local" value={formData.schedule.startTime} onChange={(e) => updateSchedule("startTime", e.target.value)} /></div>
-                <div className="form-group">
-                  <label>Frequency</label>
-                  <select value={formData.schedule.frequency} onChange={(e) => updateSchedule("frequency", e.target.value)}>
-                    <option value="once">Once</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                  </select>
-                </div>
-                <div className="form-group"><label>End Time (Optional)</label><input type="datetime-local" value={formData.schedule.endTime} onChange={(e) => updateSchedule("endTime", e.target.value)} /></div>
-              </div>
-              <p className="schedule-hint"><Clock size={14} /> The test will be automatically executed according to this schedule by your backend scheduler.</p>
-            </div>
-          )}
-
-          <hr className="section-divider" />
-
-          <p className="section-label">
-            <input type="checkbox" name="enableUserDefinedVariables" checked={formData.enableUserDefinedVariables} onChange={handleChange} />
-            Enable Global Variables
-          </p>
-          {formData.enableUserDefinedVariables && (
-            <div className="udv-box">
-              <div className="udv-table">
-                <div className="udv-row udv-row-header">
-                  <span className="udv-col-enable">
-                    <input type="checkbox" title="Enable / disable all" checked={formData.userDefinedVariables.length > 0 && formData.userDefinedVariables.every((v) => v.enabled)} onChange={(e) => toggleAllUDV(e.target.checked)} />
-                  </span>
-                  <span className="udv-col-name">Name</span>
-                  <span className="udv-col-value">Value</span>
-                  <span className="udv-col-desc">Description</span>
-                  <span className="udv-col-action"></span>
-                </div>
-                {formData.userDefinedVariables.length === 0 && <p className="no-assertion-hint">No variables defined. Click "+ Add Variable" to create one.</p>}
-                {formData.userDefinedVariables.map((v) => (
-                  <div className={`udv-row${!v.enabled ? " udv-row-disabled" : ""}`} key={v.id}>
-                    <span className="udv-col-enable"><input type="checkbox" checked={v.enabled} onChange={(e) => updateUDV(v.id, "enabled", e.target.checked)} /></span>
-                    <span className="udv-col-name"><input type="text" placeholder="Variable name" value={v.name} disabled={!v.enabled} onChange={(e) => updateUDV(v.id, "name", e.target.value)} /></span>
-                    <span className="udv-col-value"><input type="text" placeholder="Value" value={v.value} disabled={!v.enabled} onChange={(e) => updateUDV(v.id, "value", e.target.value)} /></span>
-                    <span className="udv-col-desc"><input type="text" placeholder="Description (optional)" value={v.description} disabled={!v.enabled} onChange={(e) => updateUDV(v.id, "description", e.target.value)} /></span>
-                    <span className="udv-col-action"><button type="button" className="remove-param-btn" onClick={() => removeUDV(v.id)}><Trash2 size={13} /></button></span>
-                  </div>
-                ))}
-              </div>
-              <button type="button" className="add-param-btn" style={{ marginTop: "10px" }} onClick={addUDV}><Plus size={13} /> Add Variable</button>
-            </div>
-          )}
-
-          <hr className="section-divider" />
-
-          <p className="section-label">
-            <input type="checkbox" name="enableCsvConfig" checked={formData.enableCsvConfig} onChange={handleChange} />
-            Enable CSV Data Config
-          </p>
-          {formData.enableCsvConfig && (
-            <div className="form-grid">
-              <div className="form-group"><label>CSV File Upload</label><input type="file" name="csv_file" accept=".csv" onChange={handleChange} /></div>
-              <div className="form-group"><label>Variable Name</label><input type="text" name="variable_name" value={formData.csvConfig.variable_name} onChange={handleChange} placeholder="username,password" /></div>
-            </div>
-          )}
-
-          <hr className="section-divider" />
-
-          <p className="section-label">
-            <input type="checkbox" name="enableCookieManager" checked={formData.enableCookieManager} onChange={handleChange} />
-            Enable HTTP Cookie Manager
-          </p>
-          {formData.enableCookieManager && (
-            <div className="cookie-manager-box">
-              <label className="cookie-inline-checkbox">
-                <input type="checkbox" checked={formData.cookieConfig.clearEachIteration} onChange={(e) => setFormData({ ...formData, cookieConfig: { ...formData.cookieConfig, clearEachIteration: e.target.checked } })} />
-                Clear cookies each iteration
-              </label>
-            </div>
-          )}
-
-          <hr className="section-divider" />
-
-          <p className="section-label">
-            <input type="checkbox" name="enableCacheManager" checked={formData.enableCacheManager} onChange={handleChange} />
-            Enable HTTP Cache Manager
-          </p>
-          {formData.enableCacheManager && (
-            <div className="cache-manager-box">
-              <label className="cache-inline-checkbox">
-                <input type="checkbox" checked={formData.cacheConfig.clearEachIteration} onChange={(e) => setFormData({ ...formData, cacheConfig: { ...formData.cacheConfig, clearEachIteration: e.target.checked } })} />
-                Clear cache each iteration
-              </label>
-              <div className="cache-size-row">
-                <label>Max cache entries</label>
-                <input type="number" min="1" max="5000" value={formData.cacheConfig.maxSize} onChange={(e) => setFormData({ ...formData, cacheConfig: { ...formData.cacheConfig, maxSize: Number(e.target.value) } })} />
-                <span className="cache-size-hint">per VU (JMeter default: 5000)</span>
-              </div>
-            </div>
-          )}
-
-          <hr className="section-divider" />
-
           <div className="scenario-section">
             <div className="scenario-header">
               <h3>Scenario builder</h3>

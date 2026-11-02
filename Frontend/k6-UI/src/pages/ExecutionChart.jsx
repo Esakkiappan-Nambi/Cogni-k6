@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import API from "../services/api";
 import {
-  ResponsiveContainer, LineChart, Line,
+  ResponsiveContainer, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
 
@@ -9,17 +9,25 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
-      background: "#1c2333",
-      border: "1px solid rgba(255,255,255,0.1)",
-      borderRadius: 8,
-      padding: "10px 14px",
+      background: "rgba(15, 23, 42, 0.92)",
+      backdropFilter: "blur(12px)",
+      border: "1px solid rgba(255, 255, 255, 0.12)",
+      borderRadius: 10,
+      padding: "12px 16px",
       fontSize: 12,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
     }}>
-      <p style={{ color: "#8b9ab4", marginBottom: 6 }}>Run #{label}</p>
+      <p style={{ color: "#94a3b8", marginBottom: 8, fontWeight: 600, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 4 }}>
+        Execution Run #{label}
+      </p>
       {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color, margin: "2px 0" }}>
-          {p.name}: <strong style={{ color: "#e2e8f0" }}>{p.value}</strong>
-        </p>
+        <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 16, margin: "4px 0" }}>
+          <span style={{ color: p.color, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color }} />
+            {p.name}:
+          </span>
+          <strong style={{ color: "#f8fafc", fontFamily: "'Consolas', monospace" }}>{p.value}</strong>
+        </div>
       ))}
     </div>
   );
@@ -37,58 +45,68 @@ export default function ExecutionChart() {
   if (!data.length) {
     return (
       <div style={{
-        height: 200,
+        height: 220,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        color: "#4a5568",
+        color: "#64748b",
         fontSize: 13,
       }}>
-        No execution data yet — run a test to see trends.
+        No execution data yet — trigger a test run to plot live performance metrics.
       </div>
     );
   }
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <LineChart data={data} margin={{ top: 5, right: 20, left: -15, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+    <ResponsiveContainer width="100%" height={290}>
+      <AreaChart data={data} margin={{ top: 10, right: 20, left: -15, bottom: 5 }}>
+        <defs>
+          <linearGradient id="passedGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#10b981" stopOpacity={0.35}/>
+            <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+          </linearGradient>
+          <linearGradient id="failedGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.35}/>
+            <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0}/>
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
         <XAxis
           dataKey="run_id"
-          tick={{ fill: "#4a5568", fontSize: 11 }}
+          tick={{ fill: "#64748b", fontSize: 11 }}
           axisLine={{ stroke: "rgba(255,255,255,0.06)" }}
           tickLine={false}
         />
         <YAxis
-          tick={{ fill: "#4a5568", fontSize: 11 }}
+          tick={{ fill: "#64748b", fontSize: 11 }}
           axisLine={false}
           tickLine={false}
         />
         <Tooltip content={<CustomTooltip />} />
         <Legend
-          wrapperStyle={{ fontSize: 12, color: "#8b9ab4", paddingTop: 12 }}
+          wrapperStyle={{ fontSize: 12, color: "#94a3b8", paddingTop: 16 }}
           iconType="circle"
           iconSize={8}
         />
-        <Line
+        <Area
           type="monotone"
           dataKey="failed"
-          stroke="#ef4444"
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4, fill: "#ef4444" }}
+          stroke="#f43f5e"
+          strokeWidth={2.5}
+          fillOpacity={1}
+          fill="url(#failedGradient)"
           name="Failed Runs"
         />
-        <Line
+        <Area
           type="monotone"
           dataKey="completed"
-          stroke="#22c55e"
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4, fill: "#22c55e" }}
+          stroke="#10b981"
+          strokeWidth={2.5}
+          fillOpacity={1}
+          fill="url(#passedGradient)"
           name="Passed Runs"
         />
-      </LineChart>
+      </AreaChart>
     </ResponsiveContainer>
   );
 }

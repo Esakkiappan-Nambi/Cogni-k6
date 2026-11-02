@@ -11,7 +11,7 @@ Endpoints:
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Union
 
 from api_capture.capture import (
     capture_apis, deduplicate,
@@ -48,7 +48,7 @@ class AuthCaptureRequest(BaseModel):
     login_url:            str
     username:             str
     password:             str
-    app_url:              Optional[list[str]] = None
+    app_url:              Optional[Union[list[str], str]] = None
     username_selector:    Optional[str]       = None
     password_selector:    Optional[str]       = None
     submit_selector:      Optional[str]       = None
@@ -57,6 +57,7 @@ class AuthCaptureRequest(BaseModel):
     login_timeout_ms:     int                 = 15000
     wait_ms:              int                 = 8000
     interact:             bool                = True
+    inject_auth:          bool                = True
     auth_token_var:       str                 = "token"
     dedupe:               bool                = True
 
@@ -132,12 +133,20 @@ async def auth_capture_endpoint(req: AuthCaptureRequest):
             "success_url_contains": "/dashboard"
         }
     """
+    raw_app_urls = req.app_url
+    if isinstance(raw_app_urls, str):
+        app_urls = [u.strip() for u in raw_app_urls.split(",") if u.strip()] or [req.login_url]
+    elif isinstance(raw_app_urls, list):
+        app_urls = raw_app_urls or [req.login_url]
+    else:
+        app_urls = [req.login_url]
+
     try:
         result = authenticated_capture(
             login_url            = req.login_url,
             username             = req.username,
             password             = req.password,
-            app_url              = req.app_url,
+            app_url              = app_urls,
             username_selector    = req.username_selector,
             password_selector    = req.password_selector,
             submit_selector      = req.submit_selector,
@@ -170,7 +179,6 @@ async def auth_capture_endpoint(req: AuthCaptureRequest):
         scenario = inject_auth_header(scenario, token_var=req.auth_token_var)
 
     normalised = _normalise_scenario(scenario)
-    app_urls   = req.app_url or [req.login_url]
 
     return AuthCaptureResponse(
         url           = req.login_url,
