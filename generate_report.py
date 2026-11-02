@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
 """
-generate_dashboard.py
+generate_report.py
 
-Builds a single self-contained dark-theme HTML dashboard from
-Trivy, Semgrep, and SonarQube JSON reports.
+Builds a single self-contained HTML dashboard from Trivy, Semgrep and
+SonarQube JSON reports. Trivy results are split into three separate views:
 
-USAGE
+    * Dependency Scan        (trivy fs   -> filesystem / source dependencies)
+    * Container - Frontend   (trivy image of the frontend image)
+    * Container - Backend    (trivy image of the backend image)
 
-Simplest: put your three JSON files in a folder called "attachments"
-next to this script (any filenames -- they're identified by content),
-then just run:
+USAGE (what Jenkins runs):
 
-    python generate_dashboard.py
+    python3 generate_report.py security-reports
 
-Or point at a differently-named folder:
+Or give exact file paths:
 
-    python generate_dashboard.py path/to/my_reports_folder
+    python3 generate_report.py --trivy-fs trivy-report.json \
+        --trivy-frontend trivy-frontend-image.json \
+        --trivy-backend trivy-backend-image.json \
+        --semgrep semgrep-report.json --sonarqube sonarqube-report.json
 
-Or skip auto-detection and give exact file paths:
+Reports are identified by their content (and file name as a hint), so the
+file names don't have to be exact. Any report can be missing: that section
+simply shows "report not found".
 
-    python generate_dashboard.py --trivy trivy.json --semgrep semgrep.json --sonarqube sonar.json
-
-Any of the three can be omitted -- the dashboard will just show 0 findings
-for that tool. Add -o/--output to change the output filename, and
--p/--project to set the project name shown in the header.
-
-After generating, the script always prints a clickable file:// URL to the
-report. Add --serve to also host it on a local web server and get a real
-http://localhost URL (handy for sharing on a network, or for browsers that
-restrict file:// pages):
-
-    python generate_dashboard.py --serve
-    python generate_dashboard.py --serve --port 8080
+Options: -o/--output (default dashboard.html), -p/--project, --serve, --port
 """
 
 import json
@@ -47,9 +40,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
-# Severity normalization: every tool speaks a different severity dialect.
-# We map each into a common 5-tier scale purely for coloring / sorting,
-# while always displaying the tool's own native label in the tables.
+# Severity normalization
 # ---------------------------------------------------------------------------
 LEVEL_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
@@ -61,12 +52,27 @@ LEVEL_COLORS = {
     "info": "#8a94a6",
 }
 
-# Displayed labels describe what each scan DOES, not which tool runs it.
-TOOL_LABELS = {
-    "trivy": "Dependency Scan",
-    "semgrep": "Static Analysis",
-    "sonarqube": "Code Quality",
-}
+# Ordered list of dashboard sections:
+# (key, label, detail-page subtitle, overview-card subtitle, nav icon)
+SECTIONS = [
+    ("trivy_fs", "Dependency Scan",
+     "Source dependency vulnerabilities, secrets &amp; misconfigurations (Trivy filesystem scan)",
+     "Project dependencies (filesystem)", "&#9635;"),
+    ("trivy_frontend", "Container \u2013 Frontend",
+     "Vulnerabilities found in the built frontend container image (Trivy image scan)",
+     "Frontend container image", "&#9641;"),
+    ("trivy_backend", "Container \u2013 Backend",
+     "Vulnerabilities found in the built backend container image (Trivy image scan)",
+     "Backend container image", "&#9641;"),
+    ("semgrep", "Static Analysis",
+     "Static application security testing (SAST) findings",
+     "Static application security testing", "&#9670;"),
+    ("sonarqube", "Code Quality",
+     "Code quality, bugs &amp; maintainability issues",
+     "Code quality &amp; maintainability", "&#9632;"),
+]
+SECTION_KEYS = [s[0] for s in SECTIONS]
+TOOL_LABELS = {s[0]: s[1] for s in SECTIONS}
 
 TRIVY_MAP = {
     "CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium",
@@ -79,11 +85,11 @@ SONAR_MAP = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Report detection
+# ---------------------------------------------------------------------------
 def detect_report_type(data):
-    """
-    Identify which tool produced a JSON blob by its shape, not its filename
-    (filenames vary a lot in the wild: 'attachment1.json', exports from CI, etc).
-    """
+    """Identify which tool produced a JSON blob by its shape."""
     if isinstance(data, dict):
         keys = set(data.keys())
         if "ArtifactName" in keys or ({"SchemaVersion", "Results"} <= keys):
@@ -99,24 +105,58 @@ def detect_report_type(data):
     return None
 
 
+def classify_trivy(path, data):
+    """
+    Decide which Trivy section a report belongs to:
+    trivy_fs, trivy_frontend, trivy_backend, or 'trivy_container' (an image
+    scan whose side could not be determined).
+    """
+    name = os.path.basename(path or "").lower()
+    artifact_type = str(data.get("ArtifactType", "")).lower() if isinstance(data, dict) else ""
+    artifact_name = str(data.get("ArtifactName", "")).lower() if isinstance(data, dict) else ""
+
+    is_container = artifact_type == "container_image" or "image" in name
+    if not is_container:
+        return "trivy_fs"
+
+    hint = f"{name} {artifact_name}"
+    if "frontend" in hint:
+        return "trivy_frontend"
+    if "backend" in hint:
+        return "trivy_backend"
+    return "trivy_container"
+
+
 def discover_reports(folder):
-    """Scan every *.json file in `folder` and sort them by detected report type."""
-    found = {"trivy": None, "semgrep": None, "sonarqube": None}
+    """Scan every *.json in `folder` and assign each to a dashboard section."""
+    found = {k: None for k in SECTION_KEYS}
+    unassigned_containers = []
+
     for path in sorted(glob.glob(os.path.join(folder, "*.json"))):
         data = load_json(path)
         rtype = detect_report_type(data)
-        if rtype and not found[rtype]:
+        if rtype == "trivy":
+            key = classify_trivy(path, data)
+            if key == "trivy_container":
+                unassigned_containers.append(path)
+            elif not found[key]:
+                found[key] = path
+        elif rtype and not found[rtype]:
             found[rtype] = path
-    return found
 
+    # Container scans we could not tell apart fill whichever slot is free.
+    for path in unassigned_containers:
+        for slot in ("trivy_frontend", "trivy_backend"):
+            if not found[slot]:
+                found[slot] = path
+                break
+    return found
 
 
 def load_json(path):
     if path in (None, "-", ""):
         return None
     try:
-        # utf-8-sig transparently strips a BOM if present, and behaves
-        # exactly like utf-8 when there is none.
         with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except FileNotFoundError:
@@ -128,23 +168,13 @@ def load_json(path):
 
 
 # ---------------------------------------------------------------------------
-# Parsers -- each returns a flat list of dicts with a common shape:
+# Parsers -- each returns rows shaped like:
 # { id, level, native_severity, title, location, extra, ref }
 # ---------------------------------------------------------------------------
-
 def parse_trivy(data):
     """
-    Returns (rows, packages_scanned).
-    Trivy output varies by scan mode:
-      - vulnerability scans put findings under Results[].Vulnerabilities
-      - misconfiguration scans use Results[].Misconfigurations
-      - SBOM / dependency-list scans (no vulns found) only populate
-        Results[].Packages, with no Vulnerabilities key at all
-
-    Every scanned package is represented as a row: packages with a matching
-    CVE show that vulnerability's real severity; packages with no CVE show
-    up as a "CLEAN" info-level row, so the table always reflects everything
-    Trivy actually looked at, not just the subset with problems.
+    Returns (rows, packages_scanned). Handles vulnerabilities,
+    misconfigurations, secrets, and (when present) clean packages.
     """
     rows = []
     packages_scanned = 0
@@ -170,7 +200,6 @@ def parse_trivy(data):
                 "ref": v.get("PrimaryURL", ""),
             })
 
-        # Trivy misconfigurations, if present
         for m in result.get("Misconfigurations", []) or []:
             sev = (m.get("Severity") or "UNKNOWN").upper()
             rows.append({
@@ -179,12 +208,22 @@ def parse_trivy(data):
                 "native_severity": sev,
                 "title": m.get("Title") or m.get("ID", ""),
                 "location": target,
-                "extra": m.get("Description", "")[:180],
+                "extra": (m.get("Description") or "")[:180],
                 "ref": m.get("PrimaryURL", ""),
             })
 
-        # Packages Trivy scanned but found no CVE for -- still worth showing,
-        # since "how many packages were checked" matters as much as "what's wrong".
+        for s in result.get("Secrets", []) or []:
+            sev = (s.get("Severity") or "UNKNOWN").upper()
+            rows.append({
+                "id": s.get("RuleID", ""),
+                "level": TRIVY_MAP.get(sev, "info"),
+                "native_severity": sev,
+                "title": s.get("Title") or s.get("RuleID", ""),
+                "location": f'{target}:{s.get("StartLine", "")}',
+                "extra": "Secret detected",
+                "ref": "",
+            })
+
         for p in packages:
             name = p.get("Name", "")
             if name in vulnerable_pkg_names:
@@ -232,12 +271,7 @@ def parse_sonarqube(data):
     rows = []
     if not data:
         return rows
-    # SonarQube exports come in two shapes: a bare JSON array of issues,
-    # or an object with an "issues" key (e.g. the raw /api/issues/search response).
-    if isinstance(data, list):
-        issues = data
-    else:
-        issues = data.get("issues", []) or []
+    issues = data if isinstance(data, list) else (data.get("issues", []) or [])
     for i in issues:
         sev = (i.get("severity") or "INFO").upper()
         comp = i.get("component", "")
@@ -266,7 +300,6 @@ def summarize(rows):
 # ---------------------------------------------------------------------------
 # HTML rendering
 # ---------------------------------------------------------------------------
-
 def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -283,32 +316,19 @@ def render_bar(counts):
             f'<div class="seg" style="width:{pct:.3f}%;background:{LEVEL_COLORS[level]}" '
             f'title="{level.title()}: {n}"></div>'
         )
-    return f'<div class="stackbar">{"".join(segs) if segs else "<div class=\'seg empty\'></div>"}</div>'
-
-
-def render_badges(counts):
-    out = []
-    for level in ["critical", "high", "medium", "low", "info"]:
-        n = counts[level]
-        out.append(
-            f'<span class="badge" style="--c:{LEVEL_COLORS[level]}">'
-            f'<i></i>{level.title()} <b>{n}</b></span>'
-        )
-    return "".join(out)
+    empty = "<div class='seg empty'></div>"
+    inner = "".join(segs) if segs else empty
+    return f'<div class="stackbar">{inner}</div>'
 
 
 def render_severity_grid(counts, tool_key):
-    """A prominent per-severity stat grid for a tool's overview card:
-    big number + label for Critical/High/Medium/Low/Info, each tinted by
-    severity. Boxes are clickable and jump straight to that tool's detail
-    view pre-filtered to the matching severity."""
     boxes = []
     for level in ["critical", "high", "medium", "low", "info"]:
         n = counts[level]
         boxes.append(
             f'<button type="button" class="sev-box" style="--c:{LEVEL_COLORS[level]}" '
             f'data-jump="{tool_key}" data-jump-level="{level}" '
-            f'title="View {level} findings in {TOOL_LABELS.get(tool_key, tool_key.title())}">'
+            f'title="View {level} findings in {esc(TOOL_LABELS.get(tool_key, tool_key))}">'
             f'<div class="sev-n">{n}</div>'
             f'<div class="sev-l">{level.title()}</div>'
             f'</button>'
@@ -322,8 +342,7 @@ def render_table_rows(rows, tool_key):
         f'<td colspan="5">No findings match the current filter.</td></tr>'
     )
     if not rows:
-        return f'<tr class="empty-row"><td colspan="5">No findings reported.</td></tr>' + no_match_row
-    # sort by severity level, most severe first
+        return '<tr class="empty-row"><td colspan="5">No findings reported.</td></tr>' + no_match_row
     rows_sorted = sorted(rows, key=lambda r: LEVEL_ORDER.get(r["level"], 99))
     out = []
     for r in rows_sorted:
@@ -340,174 +359,78 @@ def render_table_rows(rows, tool_key):
     return "".join(out) + no_match_row
 
 
-def build_html(trivy_rows, semgrep_rows, sonar_rows, meta):
-    t_counts = summarize(trivy_rows)
-    s_counts = summarize(semgrep_rows)
-    q_counts = summarize(sonar_rows)
-    grand_total = t_counts["total"] + s_counts["total"] + q_counts["total"]
-    grand = {
-        level: t_counts[level] + s_counts[level] + q_counts[level]
-        for level in ["critical", "high", "medium", "low", "info"]
-    }
+def make_footnote(key, found, data, counts, packages_scanned):
+    """Small line under each overview card."""
+    if not found:
+        return '<div class="card-foot missing">Report not found \u2014 this scan was skipped or failed</div>'
+    if key in ("trivy_frontend", "trivy_backend") and isinstance(data, dict):
+        image = data.get("ArtifactName", "")
+        os_meta = (data.get("Metadata") or {}).get("OS") or {}
+        os_str = " ".join(x for x in [os_meta.get("Family"), os_meta.get("Name")] if x)
+        text = f'Image: {esc(image)}' if image else 'Container image scan'
+        if os_str:
+            text += f' &middot; {esc(os_str)}'
+        if counts["total"] == 0:
+            text += ' &mdash; no vulnerabilities detected'
+        return f'<div class="card-foot">{text}</div>'
+    if key == "trivy_fs" and packages_scanned:
+        text = f'{packages_scanned} package(s) analyzed'
+        if counts["total"] == 0:
+            text += ' \u2014 no vulnerabilities detected'
+        return f'<div class="card-foot">{text}</div>'
+    return ""
 
-    generated = meta["generated"]
-    project = esc(meta.get("project", "Unnamed Project"))
-    packages_scanned = meta.get("packages_scanned", 0)
-    trivy_footnote = (
-        f'<div class="card-foot">{packages_scanned} package(s) analyzed'
-        + (' \u2014 no vulnerabilities detected' if packages_scanned and t_counts["total"] == 0 else '')
-        + '</div>'
-    ) if packages_scanned else ''
 
-    html_doc = f"""<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Security &amp; Quality Dashboard \u2014 {project}</title>
-<style>
-{CSS}
-</style>
-</head>
-<body>
+def render_nav(reports):
+    items = [
+        '<button class="nav-item active" data-target="overview">'
+        '<span class="nav-ic">&#9673;</span> Overview</button>'
+    ]
+    for key, label, _sub, _card_sub, icon in SECTIONS:
+        total = reports[key]["counts"]["total"]
+        items.append(
+            f'<button class="nav-item" data-target="{key}">'
+            f'<span class="nav-ic">{icon}</span> {esc(label)} '
+            f'<span class="nav-count">{total}</span></button>'
+        )
+    return "\n      ".join(items)
 
-<div class="app">
 
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="brand-mark">&#9679;</span>
-      <div>
-        <div class="brand-title">SCAN CONSOLE</div>
-        <div class="brand-sub">Unified Findings</div>
-      </div>
-    </div>
-
-    <nav class="nav">
-      <button class="nav-item active" data-target="overview">
-        <span class="nav-ic">&#9673;</span> Overview
-      </button>
-      <button class="nav-item" data-target="trivy">
-        <span class="nav-ic">&#9635;</span> {TOOL_LABELS['trivy']} <span class="nav-count">{t_counts['total']}</span>
-      </button>
-      <button class="nav-item" data-target="semgrep">
-        <span class="nav-ic">&#9670;</span> {TOOL_LABELS['semgrep']} <span class="nav-count">{s_counts['total']}</span>
-      </button>
-      <button class="nav-item" data-target="sonarqube">
-        <span class="nav-ic">&#9632;</span> {TOOL_LABELS['sonarqube']} <span class="nav-count">{q_counts['total']}</span>
-      </button>
-    </nav>
-
-    <div class="sidebar-foot">
-      <div>Generated</div>
-      <div class="mono">{generated}</div>
-    </div>
-  </aside>
-
-  <main class="content">
-
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">Consolidated Report</div>
-        <h1>{project}</h1>
-      </div>
-      <div class="topbar-right">
-        <div class="topbar-stats">
-          <div class="tstat"><div class="tstat-n">{grand_total}</div><div class="tstat-l">Total</div></div>
-          <div class="tstat" style="--c:{LEVEL_COLORS['critical']}"><div class="tstat-n">{grand['critical']}</div><div class="tstat-l">Critical</div></div>
-          <div class="tstat" style="--c:{LEVEL_COLORS['high']}"><div class="tstat-n">{grand['high']}</div><div class="tstat-l">High</div></div>
-          <div class="tstat" style="--c:{LEVEL_COLORS['medium']}"><div class="tstat-n">{grand['medium']}</div><div class="tstat-l">Medium</div></div>
-          <div class="tstat" style="--c:{LEVEL_COLORS['low']}"><div class="tstat-n">{grand['low']}</div><div class="tstat-l">Low</div></div>
-          <div class="tstat" style="--c:{LEVEL_COLORS['info']}"><div class="tstat-n">{grand['info']}</div><div class="tstat-l">Info</div></div>
-        </div>
-        <button class="theme-toggle" id="theme-toggle" title="Switch between dark and light mode" aria-label="Toggle light/dark theme">
-          <span class="theme-icon theme-icon-dark">&#9789;</span>
-          <span class="theme-icon theme-icon-light">&#9728;</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- ============ OVERVIEW ============ -->
-    <section id="overview" class="panel view active">
-      <div class="cards">
-
+def render_cards(reports):
+    cards = []
+    for key, label, _sub, card_sub, _icon in SECTIONS:
+        rep = reports[key]
+        counts = rep["counts"]
+        cards.append(f"""
         <div class="card">
           <div class="card-head">
-            <span class="card-tool">{TOOL_LABELS['trivy']}</span>
-            <span class="card-sub">Container &amp; dependency vulnerabilities</span>
+            <span class="card-tool">{esc(label)}</span>
+            <span class="card-sub">{card_sub}</span>
           </div>
-          {render_bar(t_counts)}
-          {render_severity_grid(t_counts, "trivy")}
-          <div class="card-total">{t_counts['total']} <span>findings</span></div>
-          {trivy_footnote}
-        </div>
-
-        <div class="card">
-          <div class="card-head">
-            <span class="card-tool">{TOOL_LABELS['semgrep']}</span>
-            <span class="card-sub">Static application security testing</span>
-          </div>
-          {render_bar(s_counts)}
-          {render_severity_grid(s_counts, "semgrep")}
-          <div class="card-total">{s_counts['total']} <span>findings</span></div>
-        </div>
-
-        <div class="card">
-          <div class="card-head">
-            <span class="card-tool">{TOOL_LABELS['sonarqube']}</span>
-            <span class="card-sub">Code quality &amp; maintainability</span>
-          </div>
-          {render_bar(q_counts)}
-          {render_severity_grid(q_counts, "sonarqube")}
-          <div class="card-total">{q_counts['total']} <span>findings</span></div>
-        </div>
-
-      </div>
-
-      <div class="legend">
-        <span>Severity scale used across tools:</span>
-        <span class="legend-item"><i style="background:{LEVEL_COLORS['critical']}"></i>Critical</span>
-        <span class="legend-item"><i style="background:{LEVEL_COLORS['high']}"></i>High</span>
-        <span class="legend-item"><i style="background:{LEVEL_COLORS['medium']}"></i>Medium</span>
-        <span class="legend-item"><i style="background:{LEVEL_COLORS['low']}"></i>Low</span>
-        <span class="legend-item"><i style="background:{LEVEL_COLORS['info']}"></i>Info</span>
-        <span class="legend-note">Native severity labels are preserved in each tool's detail table.</span>
-      </div>
-    </section>
-
-    <!-- ============ DEPENDENCY SCAN ============ -->
-    {render_detail_section("trivy", TOOL_LABELS['trivy'], "Container image &amp; dependency vulnerabilities", trivy_rows, t_counts)}
-
-    <!-- ============ STATIC ANALYSIS ============ -->
-    {render_detail_section("semgrep", TOOL_LABELS['semgrep'], "Static application security testing (SAST) findings", semgrep_rows, s_counts)}
-
-    <!-- ============ CODE QUALITY ============ -->
-    {render_detail_section("sonarqube", TOOL_LABELS['sonarqube'], "Code quality, bugs &amp; maintainability issues", sonar_rows, q_counts)}
-
-  </main>
-</div>
-
-<script>
-{JS}
-</script>
-</body>
-</html>
-"""
-    return html_doc
+          {render_bar(counts)}
+          {render_severity_grid(counts, key)}
+          <div class="card-total">{counts['total']} <span>findings</span></div>
+          {rep['foot']}
+        </div>""")
+    return "\n".join(cards)
 
 
-def render_detail_section(key, name, subtitle, rows, counts):
+def render_detail_section(key, name, subtitle, rows, counts, found):
+    notice = ""
+    if not found:
+        notice = '<div class="notice">No report file was found for this scan.</div>'
     return f"""
     <section id="{key}" class="panel view">
       <div class="section-head">
         <div>
-          <h2>{name}</h2>
+          <h2>{esc(name)}</h2>
           <p class="section-sub">{subtitle}</p>
         </div>
         {render_bar(counts)}
       </div>
-
+      {notice}
       <div class="toolbar">
-        <input type="text" class="search" placeholder="Filter {name} findings by ID, message, or location..." data-scope="{key}">
+        <input type="text" class="search" placeholder="Filter {esc(name)} findings by ID, message, or location..." data-scope="{key}">
         <div class="chips" data-scope="{key}">
           <button class="chip active" data-level="all">All ({counts['total']})</button>
           <button class="chip" data-level="critical" style="--c:{LEVEL_COLORS['critical']}">Critical ({counts['critical']})</button>
@@ -544,6 +467,107 @@ def render_detail_section(key, name, subtitle, rows, counts):
     """
 
 
+def build_html(reports, meta):
+    grand = {lvl: sum(r["counts"][lvl] for r in reports.values())
+             for lvl in ["critical", "high", "medium", "low", "info"]}
+    grand_total = sum(r["counts"]["total"] for r in reports.values())
+
+    generated = meta["generated"]
+    project = esc(meta.get("project", "Unnamed Project"))
+
+    detail_sections = "\n".join(
+        render_detail_section(key, label, sub, reports[key]["rows"],
+                             reports[key]["counts"], reports[key]["found"])
+        for key, label, sub, _cs, _ic in SECTIONS
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security &amp; Quality Dashboard \u2014 {project}</title>
+<style>
+{CSS}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">&#9679;</span>
+      <div>
+        <div class="brand-title">SCAN CONSOLE</div>
+        <div class="brand-sub">Unified Findings</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      {render_nav(reports)}
+    </nav>
+
+    <div class="sidebar-foot">
+      <div>Generated</div>
+      <div class="mono">{generated}</div>
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Consolidated Report</div>
+        <h1>{project}</h1>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-stats">
+          <div class="tstat"><div class="tstat-n">{grand_total}</div><div class="tstat-l">Total</div></div>
+          <div class="tstat" style="--c:{LEVEL_COLORS['critical']}"><div class="tstat-n">{grand['critical']}</div><div class="tstat-l">Critical</div></div>
+          <div class="tstat" style="--c:{LEVEL_COLORS['high']}"><div class="tstat-n">{grand['high']}</div><div class="tstat-l">High</div></div>
+          <div class="tstat" style="--c:{LEVEL_COLORS['medium']}"><div class="tstat-n">{grand['medium']}</div><div class="tstat-l">Medium</div></div>
+          <div class="tstat" style="--c:{LEVEL_COLORS['low']}"><div class="tstat-n">{grand['low']}</div><div class="tstat-l">Low</div></div>
+          <div class="tstat" style="--c:{LEVEL_COLORS['info']}"><div class="tstat-n">{grand['info']}</div><div class="tstat-l">Info</div></div>
+        </div>
+        <button class="theme-toggle" id="theme-toggle" title="Switch between dark and light mode" aria-label="Toggle light/dark theme">
+          <span class="theme-icon theme-icon-dark">&#9789;</span>
+          <span class="theme-icon theme-icon-light">&#9728;</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ============ OVERVIEW ============ -->
+    <section id="overview" class="panel view active">
+      <div class="cards">
+        {render_cards(reports)}
+      </div>
+
+      <div class="legend">
+        <span>Severity scale used across tools:</span>
+        <span class="legend-item"><i style="background:{LEVEL_COLORS['critical']}"></i>Critical</span>
+        <span class="legend-item"><i style="background:{LEVEL_COLORS['high']}"></i>High</span>
+        <span class="legend-item"><i style="background:{LEVEL_COLORS['medium']}"></i>Medium</span>
+        <span class="legend-item"><i style="background:{LEVEL_COLORS['low']}"></i>Low</span>
+        <span class="legend-item"><i style="background:{LEVEL_COLORS['info']}"></i>Info</span>
+        <span class="legend-note">Native severity labels are preserved in each detail table.</span>
+      </div>
+    </section>
+
+    <!-- ============ DETAIL SECTIONS ============ -->
+    {detail_sections}
+
+  </main>
+</div>
+
+<script>
+{JS}
+</script>
+</body>
+</html>
+"""
+
+
 CSS = """
 :root{
   --bg:#0a0e16;
@@ -571,7 +595,7 @@ html[data-theme="light"]{
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);transition:background .2s ease,color .2s ease;}
-.app{display:grid;grid-template-columns:240px 1fr;min-height:100vh;}
+.app{display:grid;grid-template-columns:250px 1fr;min-height:100vh;}
 
 /* Sidebar */
 .sidebar{background:var(--panel-2);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100vh;}
@@ -592,7 +616,7 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:
 .sidebar-foot .mono{font-family:var(--mono);color:var(--text-dim);margin-top:3px;font-size:11px;}
 
 /* Content */
-.content{padding:28px 36px 60px 36px;max-width:1280px;}
+.content{padding:28px 36px 60px 36px;max-width:1320px;}
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:20px;margin-bottom:28px;}
 .topbar-right{display:flex;align-items:center;gap:16px;}
 .eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600;margin-bottom:6px;}
@@ -616,7 +640,7 @@ h1{margin:0;font-size:26px;font-weight:700;color:var(--heading);letter-spacing:-
 .view.active{display:block;}
 
 /* Overview cards */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px;}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:20px;}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;transition:box-shadow .15s ease,border-color .15s ease;}
 .card:hover{border-color:color-mix(in srgb, var(--accent) 35%, var(--border));box-shadow:0 6px 20px rgba(0,0,0,.12);}
 .card-head{display:flex;flex-direction:column;margin-bottom:14px;}
@@ -624,17 +648,15 @@ h1{margin:0;font-size:26px;font-weight:700;color:var(--heading);letter-spacing:-
 .card-sub{font-size:11.5px;color:var(--text-faint);margin-top:2px;}
 .card-total{margin-top:14px;font-family:var(--mono);font-size:20px;font-weight:700;color:var(--heading);}
 .card-total span{font-family:var(--sans);font-size:11px;color:var(--text-faint);font-weight:400;margin-left:4px;}
-.card-foot{margin-top:8px;font-size:11px;color:var(--text-faint);}
+.card-foot{margin-top:8px;font-size:11px;color:var(--text-faint);word-break:break-all;}
+.card-foot.missing{color:#f2c94c;}
+
+.notice{background:color-mix(in srgb, #f2c94c 12%, var(--panel));border:1px solid color-mix(in srgb, #f2c94c 45%, var(--border));
+  color:var(--text);border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;}
 
 .stackbar{display:flex;width:100%;height:8px;border-radius:6px;overflow:hidden;background:color-mix(in srgb, var(--text) 8%, transparent);}
 .stackbar .seg{height:100%;}
 .stackbar .seg.empty{width:100%;background:color-mix(in srgb, var(--text) 6%, transparent);}
-
-.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
-.badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);background:color-mix(in srgb, var(--text) 6%, transparent);
-  border:1px solid var(--border);padding:3px 9px;border-radius:20px;}
-.badge i{width:6px;height:6px;border-radius:50%;background:var(--c);display:inline-block;}
-.badge b{color:var(--text);font-family:var(--mono);}
 
 .sev-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:14px;}
 .sev-box{border:1px solid var(--border);border-top:2px solid var(--c);border-radius:8px;padding:9px 4px;text-align:center;
@@ -699,6 +721,7 @@ a:hover{text-decoration:underline;}
 @media (max-width: 860px){
   .app{grid-template-columns:1fr;}
   .sidebar{position:relative;height:auto;flex-direction:row;overflow-x:auto;align-items:center;}
+  .nav{flex-direction:row;}
   .brand{border-bottom:none;margin-bottom:0;}
   .sidebar-foot{display:none;}
   .content{padding:20px;}
@@ -801,7 +824,7 @@ JS = """
     });
   });
 
-  // Overview cards: clicking a severity box jumps to that tool's tab,
+  // Overview cards: clicking a severity box jumps to that section,
   // pre-filtered to the matching severity level.
   document.querySelectorAll('.sev-box[data-jump]').forEach(box => {
     box.addEventListener('click', () => {
@@ -816,7 +839,6 @@ JS = """
     });
   });
 
-  // Set the initial pagination display for every table on load.
   document.querySelectorAll('.pagination').forEach(pag => applyFilter(pag.dataset.scope, true));
 })();
 """
@@ -824,96 +846,102 @@ JS = """
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Generate a unified Trivy/Semgrep/SonarQube HTML dashboard.",
-        epilog="If no arguments are given, looks for a folder named 'attachments' "
-               "in the current directory and auto-detects the three reports inside it "
-               "by content, regardless of filename."
+        description="Generate a unified Trivy/Semgrep/SonarQube HTML dashboard "
+                    "with separate dependency and container scan views."
     )
     ap.add_argument("folder", nargs="?", default=None,
-                     help="Folder containing the JSON reports (auto-detected by content). "
-                          "Defaults to './attachments' if that folder exists.")
-    ap.add_argument("--trivy", default=None, help="Explicit path to the Trivy JSON report (overrides auto-detect)")
-    ap.add_argument("--semgrep", default=None, help="Explicit path to the Semgrep JSON report (overrides auto-detect)")
-    ap.add_argument("--sonarqube", default=None, help="Explicit path to the SonarQube JSON report (overrides auto-detect)")
+                    help="Folder containing the JSON reports (auto-detected by content). "
+                         "Defaults to './attachments' if that folder exists.")
+    ap.add_argument("--trivy-fs", "--trivy", dest="trivy_fs", default=None,
+                    help="Trivy filesystem (dependency) JSON report")
+    ap.add_argument("--trivy-frontend", default=None, help="Trivy image JSON report for the frontend")
+    ap.add_argument("--trivy-backend", default=None, help="Trivy image JSON report for the backend")
+    ap.add_argument("--semgrep", default=None, help="Semgrep JSON report")
+    ap.add_argument("--sonarqube", default=None, help="SonarQube JSON report")
     ap.add_argument("-o", "--output", default="dashboard.html", help="Output HTML file path")
     ap.add_argument("-p", "--project", default=None, help="Project name to display in the header")
     ap.add_argument("--serve", action="store_true",
-                     help="After generating, host the dashboard on a local web server and print a clickable http:// URL")
-    ap.add_argument("--port", type=int, default=0,
-                     help="Port to use with --serve (default: 0, meaning auto-pick a free port)")
+                    help="After generating, host the dashboard on a local web server")
+    ap.add_argument("--port", type=int, default=0, help="Port for --serve (default: auto)")
     args = ap.parse_args()
 
     folder = args.folder
     if folder is None and os.path.isdir("attachments"):
         folder = "attachments"
 
-    discovered = {"trivy": None, "semgrep": None, "sonarqube": None}
+    discovered = {k: None for k in SECTION_KEYS}
     if folder:
         if not os.path.isdir(folder):
             print(f"Error: '{folder}' is not a directory.", file=sys.stderr)
             sys.exit(1)
         discovered = discover_reports(folder)
 
-    trivy_path = args.trivy or discovered["trivy"]
-    semgrep_path = args.semgrep or discovered["semgrep"]
-    sonarqube_path = args.sonarqube or discovered["sonarqube"]
+    paths = {
+        "trivy_fs": args.trivy_fs or discovered["trivy_fs"],
+        "trivy_frontend": args.trivy_frontend or discovered["trivy_frontend"],
+        "trivy_backend": args.trivy_backend or discovered["trivy_backend"],
+        "semgrep": args.semgrep or discovered["semgrep"],
+        "sonarqube": args.sonarqube or discovered["sonarqube"],
+    }
 
-    if not any([trivy_path, semgrep_path, sonarqube_path]):
+    if not any(paths.values()):
         print("No Trivy, Semgrep, or SonarQube JSON reports were found.", file=sys.stderr)
         if folder:
             print(f"Looked in: {os.path.abspath(folder)}", file=sys.stderr)
-        print("Pass a folder path, or use --trivy/--semgrep/--sonarqube to point at files directly.", file=sys.stderr)
         sys.exit(1)
 
     print("Detected reports:")
-    print(f"  Trivy:     {trivy_path or '(not found)'}")
-    print(f"  Semgrep:   {semgrep_path or '(not found)'}")
-    print(f"  SonarQube: {sonarqube_path or '(not found)'}")
+    for key in SECTION_KEYS:
+        print(f"  {TOOL_LABELS[key]:<24} {paths[key] or '(not found)'}")
 
-    trivy_data = load_json(trivy_path) if trivy_path else None
-    semgrep_data = load_json(semgrep_path) if semgrep_path else None
-    sonar_data = load_json(sonarqube_path) if sonarqube_path else None
+    data = {key: (load_json(p) if p else None) for key, p in paths.items()}
 
-    trivy_rows, packages_scanned = parse_trivy(trivy_data)
-    semgrep_rows = parse_semgrep(semgrep_data)
-    sonar_rows = parse_sonarqube(sonar_data)
+    reports = {}
+    packages_by_key = {}
+    for key in SECTION_KEYS:
+        if key.startswith("trivy"):
+            rows, pkgs = parse_trivy(data[key])
+        elif key == "semgrep":
+            rows, pkgs = parse_semgrep(data[key]), 0
+        else:
+            rows, pkgs = parse_sonarqube(data[key]), 0
+        counts = summarize(rows)
+        found = data[key] is not None
+        reports[key] = {
+            "rows": rows,
+            "counts": counts,
+            "found": found,
+            "foot": make_footnote(key, found, data[key], counts, pkgs),
+        }
+        packages_by_key[key] = pkgs
 
     project = args.project
-    if not project and trivy_data:
-        project = trivy_data.get("ArtifactName")
+    if not project and isinstance(data["trivy_fs"], dict):
+        project = data["trivy_fs"].get("ArtifactName")
     if not project or project == ".":
         project = "Project Scan Report"
 
     meta = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "project": project,
-        "packages_scanned": packages_scanned,
     }
 
-    doc = build_html(trivy_rows, semgrep_rows, sonar_rows, meta)
+    doc = build_html(reports, meta)
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(doc)
 
     output_path = Path(args.output).resolve()
-    file_url = output_path.as_uri()
-
     print(f"\nDashboard written to {output_path}")
-    print(f"  Trivy findings:     {len(trivy_rows)}")
-    print(f"  Semgrep findings:   {len(semgrep_rows)}")
-    print(f"  SonarQube findings: {len(sonar_rows)}")
-    print(f"\nOpen it directly:\n  {file_url}")
+    for key in SECTION_KEYS:
+        print(f"  {TOOL_LABELS[key]:<24} {reports[key]['counts']['total']} findings")
+    print(f"\nOpen it directly:\n  {output_path.as_uri()}")
 
     if args.serve:
         serve_dashboard(output_path, args.port)
 
 
 def serve_dashboard(output_path, port=0):
-    """
-    Hosts the folder containing the dashboard on a local HTTP server and
-    prints a proper http:// URL -- more shareable/professional than a raw
-    file path, and avoids browser restrictions some file:// pages hit.
-    Runs until interrupted with Ctrl+C.
-    """
+    """Host the dashboard on a local HTTP server until Ctrl+C."""
     directory = str(output_path.parent)
     filename = output_path.name
 
@@ -922,7 +950,7 @@ def serve_dashboard(output_path, port=0):
             super().__init__(*a, directory=directory, **kw)
 
         def log_message(self, fmt, *args_):
-            pass  # keep the console clean; errors still surface via exceptions
+            pass
 
     with socketserver.TCPServer(("127.0.0.1", port), QuietHandler) as httpd:
         actual_port = httpd.server_address[1]
