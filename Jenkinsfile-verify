@@ -6,7 +6,18 @@ pipeline {
         string(name: 'FINDING_ID', defaultValue: '', description: 'RemediGuard finding id, for correlation in logs')
     }
 
+
     stages {
+        stage('Checkout patch branch') {
+            steps {
+                // Uses the same repo/credentials as the job's SCM config, but checks out the BRANCH parameter
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${params.BRANCH}"]],
+                    userRemoteConfigs: scm.userRemoteConfigs
+                ])
+                sh 'git clean -fdx'
+            }
         stage('Preflight') {
             steps {
                 sh 'command -v jq'
