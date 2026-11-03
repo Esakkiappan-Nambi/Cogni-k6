@@ -42,41 +42,37 @@ pipeline {
                   test -s semgrep-results.json
                 '''
             }
-post {
-    always {
-        withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
-            sh '''
-              set -e
-              if [ ! -f trivy-results.json ] || [ ! -s trivy-results.json ]; then
-                echo "trivy-results.json missing or empty"
-                exit 1
-              fi
+            post {
+                always {
+                    withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
+                        sh '''
+                          set -e
+                          if [ ! -s semgrep-results.json ]; then
+                            echo "semgrep-results.json missing or empty"
+                            exit 1
+                          fi
 
-              jq -c -n \
-                --arg repo "${REPO_SLUG}" \
-                --arg sha "${GIT_COMMIT}" \
-                --arg branch "${GIT_BRANCH}" \
-                --slurpfile scan trivy-results.json \
-                '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
-                > trivy-payload.json
+                          jq -c -n \
+                            --arg repo "${REPO_SLUG}" \
+                            --arg sha "${GIT_COMMIT}" \
+                            --arg branch "${GIT_BRANCH}" \
+                            --slurpfile scan semgrep-results.json \
+                            '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
+                            > semgrep-payload.json
 
-              ls -lh trivy-payload.json
+                          RESP=$(curl -s -w "\\nHTTP_STATUS:%{http_code}" -X POST \
+                            "${REMEDIGUARD_URL}/webhook/finding?source=semgrep" \
+                            -H "X-Remediguard-Secret: ${RG_SECRET}" \
+                            -H "Content-Type: application/json" \
+                            --data-binary @semgrep-payload.json)
 
-              RESP=$(curl -s -w "\\nHTTP_STATUS:%{http_code}" -X POST \
-                "${REMEDIGUARD_URL}/webhook/finding?source=trivy" \
-                -H "X-Remediguard-Secret: ${RG_SECRET}" \
-                -H "Content-Type: application/json" \
-                --data-binary @trivy-payload.json)
-
-              echo "$RESP" | tail -n 3
-              echo "$RESP" | grep -q "HTTP_STATUS:2" || { echo "webhook failed"; exit 1; }
-            '''
+                          echo "$RESP" | tail -n 3
+                          echo "$RESP" | grep -q "HTTP_STATUS:2" || { echo "webhook failed"; exit 1; }
+                        '''
+                    }
+                }
+            }
         }
-    }
-}
-        }
-
-    
 
         stage('Trivy Dependency Scan') {
             steps {
@@ -100,21 +96,26 @@ post {
                     withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
                         sh '''
                           set -e
-                          if [ ! -f trivy-results.json ] || [ ! -s trivy-results.json ]; then
+                          if [ ! -s trivy-results.json ]; then
                             echo "trivy-results.json missing or empty"
                             exit 1
                           fi
+
+                          jq -c -n \
+                            --arg repo "${REPO_SLUG}" \
+                            --arg sha "${GIT_COMMIT}" \
+                            --arg branch "${GIT_BRANCH}" \
+                            --slurpfile scan trivy-results.json \
+                            '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
+                            > trivy-payload.json
+
                           RESP=$(curl -s -w "\\nHTTP_STATUS:%{http_code}" -X POST \
                             "${REMEDIGUARD_URL}/webhook/finding?source=trivy" \
                             -H "X-Remediguard-Secret: ${RG_SECRET}" \
                             -H "Content-Type: application/json" \
-                            -d "$(jq -n \
-                                  --arg repo "${REPO_SLUG}" \
-                                  --arg sha "${GIT_COMMIT}" \
-                                  --arg branch "${GIT_BRANCH}" \
-                                  --slurpfile scan trivy-results.json \
-                                  '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}')")
-                          echo "$RESP"
+                            --data-binary @trivy-payload.json)
+
+                          echo "$RESP" | tail -n 3
                           echo "$RESP" | grep -q "HTTP_STATUS:2" || { echo "webhook failed"; exit 1; }
                         '''
                     }
