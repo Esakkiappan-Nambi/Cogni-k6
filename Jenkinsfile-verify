@@ -27,6 +27,7 @@ pipeline {
                 sh 'command -v jq'
                 sh 'command -v docker'
                 echo "Verifying finding ${params.FINDING_ID} on branch ${params.BRANCH}"
+                sh 'git log -1 --oneline'
             }
         }
 
@@ -36,15 +37,34 @@ pipeline {
                   docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" node:20 \
                     bash -c "npm install --no-audit --no-fund && npx tsc --noEmit" \
                     > build-output.log 2>&1 || true
+                  echo $? > build-exit-code
                   cat build-output.log
+                  echo "build exit code: $(cat build-exit-code)"
                 '''
             }
         }
 
         stage('Re-scan') {
             steps {
-                sh 'docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" semgrep/semgrep semgrep scan --config auto --no-git-ignore --json --output semgrep-rescan.json . || true'
-                sh 'docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" aquasec/trivy fs --format json --output trivy-rescan.json . || true'
+                sh '''
+                  set +e
+                  rm -f semgrep-rescan.json trivy-rescan.json
+
+                  # Make sure Trivy has a lockfile to read
+                  docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" node:20 \
+                    npm install --package-lock-only --no-audit --no-fund
+
+                  docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" \
+                    semgrep/semgrep semgrep scan --config auto --no-git-ignore --json --output semgrep-rescan.json .
+                  echo $? > semgrep-exit-code
+
+                  docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" \
+                    aquasec/trivy fs --format json --output trivy-rescan.json .
+                  echo $? > trivy-exit-code
+
+                  echo "semgrep exit: $(cat semgrep-exit-code), trivy exit: $(cat trivy-exit-code)"
+                  exit 0
+                '''
             }
         }
 
