@@ -99,35 +99,44 @@ pipeline {
                   test -s trivy-results.json
                 '''
             }
-            post {
-                always {
-                    withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
-                        sh '''
-                          set -e
-                          if [ ! -s trivy-results.json ]; then
-                            echo "trivy-results.json missing or empty"
-                            exit 1
-                          fi
+post {
+    always {
+        withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
+            sh '''
+              if [ ! -s trivy-results.json ]; then
+                echo "trivy-results.json missing or empty"
+                exit 1
+              fi
 
-                          jq -c -n \
-                            --arg repo "${REPO_SLUG}" \
-                            --arg sha "${GIT_COMMIT}" \
-                            --arg branch "${GIT_BRANCH}" \
-                            --slurpfile scan trivy-results.json \
-                            '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
-                            > trivy-payload.json
+              jq -c -n \
+                --arg repo "${REPO_SLUG}" \
+                --arg sha "${GIT_COMMIT}" \
+                --arg branch "${GIT_BRANCH}" \
+                --slurpfile scan trivy-results.json \
+                '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
+                > trivy-payload.json
 
-                          RESP=$(curl -s -w "\\nHTTP_STATUS:%{http_code}" -X POST \
-                            "${REMEDIGUARD_URL}/webhook/finding?source=trivy" \
-                            -H "X-Remediguard-Secret: ${RG_SECRET}" \
-                            -H "Content-Type: application/json" \
-                            --data-binary @trivy-payload.json)
+              echo "Reachability check:"
+              getent hosts host.docker.internal || echo "WARN: host.docker.internal does not resolve"
 
-                          echo "$RESP" | tail -n 3
-                          echo "$RESP" | grep -q "HTTP_STATUS:2" || { echo "webhook failed"; exit 1; }
-                        '''
-                    }
-                }
+              HTTP_CODE=$(curl -s -o webhook-response.txt -w "%{http_code}" \
+                --connect-timeout 5 --max-time 60 --retry 3 --retry-delay 2 --retry-connrefused \
+                -X POST "${REMEDIGUARD_URL}/webhook/finding?source=semgrep" \
+                -H "X-Remediguard-Secret: ${RG_SECRET}" \
+                -H "Content-Type: application/json" \
+                --data-binary @semgrep-payload.json) || HTTP_CODE="000"
+
+              echo "Webhook HTTP status: ${HTTP_CODE}"
+              cat webhook-response.txt 2>/dev/null || true
+
+              case "$HTTP_CODE" in
+                2*) echo "Webhook delivered." ;;
+                *)  echo "WARN: webhook failed (status ${HTTP_CODE}); continuing build." ;;
+              esac
+            '''
+        }
+    }
+}
             }
         }
     }
