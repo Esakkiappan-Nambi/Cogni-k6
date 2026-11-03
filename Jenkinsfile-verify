@@ -6,6 +6,10 @@ pipeline {
         string(name: 'FINDING_ID', defaultValue: '', description: 'RemediGuard finding id, for correlation in logs')
     }
 
+    environment {
+        JENKINS_HOME_VOLUME = 'jenkins_home'
+    }
+
 
     stages {
         stage('Checkout patch branch') {
