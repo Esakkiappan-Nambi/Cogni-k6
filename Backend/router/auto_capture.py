@@ -214,8 +214,8 @@ async def auto_generate(req: AutoGenerateRequest):
         scenario = deduplicate(raw)
     scenario = correlate(scenario)
     script_path = generate_k6_script(test_name=req.test_name, users=req.users,
-                                     duration=req.duration, ramp_up=req.ramp_up,
-                                     loop_count=req.loop_count, scenario=scenario)
+                                    duration=req.duration, ramp_up=req.ramp_up,
+                                    loop_count=req.loop_count, scenario=scenario)
     return {"message": "Script generated", "script_path": script_path,
             "scenario": scenario, "count": len(scenario)}
 
@@ -244,7 +244,7 @@ def _normalise_scenario(scenario):
                 "max_error_rate": "", "text_assertions": [],
             },
             "retry": {"enabled": False, "maxRetries": 3, "retryDelay": 1000,
-                      "retryOn": [500, 502, 503], "retryOnTimeout": True},
+                    "retryOn": [500, 502, 503], "retryOnTimeout": True},
         })
     return result
 

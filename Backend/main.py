@@ -45,6 +45,8 @@ scheduler.start()
 running_processes: dict = {}
 
 SCRIPT_FOLDER = "generated_scripts"
+P90_METRIC = "p(90)"
+P95_METRIC = "p(95)"
 
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
@@ -68,6 +70,10 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+DatabaseSession = Annotated[Session, Depends(get_db)]
+AuthenticatedUser = Annotated[User, Depends(get_current_user)]
 
 
 # ── Metric helpers ────────────────────────────────────────────────────────────
@@ -98,8 +104,8 @@ def extract_metrics(summary_data, output, summary_path=None):
         "avg_response_time": duration.get("avg", 0),
         "min_response_time": duration.get("min", 0),
         "max_response_time": duration.get("max", 0),
-        "p90":               duration.get("p(90)", 0),
-        "p95":               duration.get("p(95)", 0),
+        "p90":               duration.get(P90_METRIC, 0),
+        "p95":               duration.get(P95_METRIC, 0),
         "failed_requests":   checks.get("fails", 0),
         "passed_checks":     checks.get("passes", 0),
         "error_rate":        failed.get("value", 0) * 100,
@@ -149,7 +155,7 @@ def _parse_schedule(schedule_str) -> dict | None:
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
 @app.post("/register")
-def register_user(user: RegisterUser, db: Session = Depends(get_db)):
+def register_user(user: RegisterUser, db: DatabaseSession):
     existing_user = db.query(User).filter(User.email == user.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -169,7 +175,7 @@ def register_user(user: RegisterUser, db: Session = Depends(get_db)):
 
 
 @app.post("/login")
-def login_user(user: LoginUser, db: Session = Depends(get_db)):
+def login_user(user: LoginUser, db: DatabaseSession):
     db_user = db.query(User).filter(User.email == user.email).first()
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid Credentials")
@@ -186,7 +192,7 @@ def login_user(user: LoginUser, db: Session = Depends(get_db)):
 
 
 @app.get("/verify-token")
-def verify_token(current_user: User = Depends(get_current_user)):
+def verify_token(current_user: AuthenticatedUser):
     return {"valid": True, "user": current_user.email}
 
 
@@ -212,8 +218,9 @@ def create_test(
     user_defined_variables:  str        = Form(None),
     enable_scheduling:       bool       = Form(False),
     schedule:                str        = Form(None),
-    db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user),
+    *,
+    db: DatabaseSession,
+    current_user: AuthenticatedUser,
 ):
     # ── Parse scenario ────────────────────────────────────────────────────────
     try:
@@ -381,8 +388,9 @@ def update_test(
     user_defined_variables:  str        = Form(None),
     enable_scheduling:       bool       = Form(False),
     schedule:                str        = Form(None),
-    db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user),
+    *,
+    db: DatabaseSession,
+    current_user: AuthenticatedUser,
 ):
     test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
@@ -528,7 +536,7 @@ def update_test(
 
 
 @app.delete("/delete-test/{test_id}")
-def delete_test(test_id: int, db: Session = Depends(get_db)):
+def delete_test(test_id: int, db: DatabaseSession):
     test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
@@ -618,10 +626,10 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
                         duration_line.group(1),
                     )
                 )
-                if {"avg", "p(90)", "p(95)"} <= duration_values.keys():
+                if {"avg", P90_METRIC, P95_METRIC} <= duration_values.keys():
                     data["avg_response_time"] = duration_values["avg"][0]
-                    data["p90"] = duration_values["p(90)"][0]
-                    data["p95"] = duration_values["p(95)"][0]
+                    data["p90"] = duration_values[P90_METRIC][0]
+                    data["p95"] = duration_values[P95_METRIC][0]
             m_vus = re.search(r'(\d+)/(\d+)\s+VUs', line)
             if m_vus:
                 data["active_vus"] = int(m_vus.group(1))
@@ -734,8 +742,8 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
 def run_test(
     test_id: int,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: DatabaseSession,
+    current_user: AuthenticatedUser,
 ):
     test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
@@ -776,8 +784,8 @@ def run_test(
 @app.post("/stop-test/{test_id}")
 def stop_test(
     test_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: DatabaseSession,
+    current_user: AuthenticatedUser,
 ):
     """
     Terminates the active k6 process immediately and marks status as stopped.
@@ -816,7 +824,7 @@ def stop_test(
 # ── Query endpoints ───────────────────────────────────────────────────────────
 
 @app.get("/tests")
-def get_tests(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_tests(db: DatabaseSession, current_user: AuthenticatedUser):
     tests = db.query(Test).filter(Test.user_id == current_user.id).all()
     result = []
     for test in tests:
@@ -838,7 +846,7 @@ def get_tests(db: Session = Depends(get_db), current_user: User = Depends(get_cu
 
 
 @app.get("/test-runs")
-def get_test_runs(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_test_runs(db: DatabaseSession, current_user: AuthenticatedUser):
     runs = (
         db.query(TestRun)
         .join(Test, Test.id == TestRun.test_id)
@@ -860,7 +868,7 @@ def get_test_runs(db: Session = Depends(get_db), current_user: User = Depends(ge
 
 
 @app.get("/report/{run_id}")
-def get_report(run_id: int, db: Session = Depends(get_db)):
+def get_report(run_id: int, db: DatabaseSession):
     run = db.query(TestRun).filter(TestRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -917,7 +925,7 @@ def get_report(run_id: int, db: Session = Depends(get_db)):
     }
     
 @app.get("/latest-run/{test_id}")
-def get_latest_run(test_id: int, db: Session = Depends(get_db)):
+def get_latest_run(test_id: int, db: DatabaseSession):
     latest_run = (
         db.query(TestRun)
         .filter(TestRun.test_id == test_id)
@@ -930,7 +938,7 @@ def get_latest_run(test_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/reports")
-def get_reports(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_reports(db: DatabaseSession, current_user: AuthenticatedUser):
     runs = (
         db.query(TestRun, Test.test_name)
         .join(Test, Test.id == TestRun.test_id)
@@ -1070,7 +1078,7 @@ def preview_step(
 @app.post("/preview-script")
 def preview_script(
     payload: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: AuthenticatedUser,
 ):
     """
     Generates and returns the full k6 JavaScript code without saving to DB,
@@ -1140,7 +1148,7 @@ def preview_script(
 @app.post("/discover-apis")
 def discover_apis(
     payload: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: AuthenticatedUser,
 ):
     swagger_url = (payload.get("swagger_url") or "").strip()
     if not swagger_url:
@@ -1167,7 +1175,7 @@ def discover_apis(
 @app.post("/import-apis")
 def import_apis(
     payload: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: AuthenticatedUser,
 ):
     apis = payload.get("apis") or []
     if not isinstance(apis, list) or not apis:
@@ -1204,7 +1212,7 @@ def import_apis(
 
 
 @app.get("/dashboard-stats")
-def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def dashboard_stats(db: DatabaseSession, current_user: AuthenticatedUser):
     total_tests = db.query(Test).filter(Test.user_id == current_user.id).count()
 
     base_q = (
@@ -1230,8 +1238,8 @@ def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(
 @app.get("/test/{test_id}")
 def get_test_by_id(
     test_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: DatabaseSession,
+    current_user: AuthenticatedUser,
 ):
     test = db.query(Test).filter(Test.id == test_id, Test.user_id == current_user.id).first()
     if not test:
@@ -1240,7 +1248,7 @@ def get_test_by_id(
 
 
 @app.get("/recent-tests")
-def recent_tests(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def recent_tests(db: DatabaseSession, current_user: AuthenticatedUser):
     return (
         db.query(Test)
         .filter(Test.user_id == current_user.id)
@@ -1251,7 +1259,7 @@ def recent_tests(db: Session = Depends(get_db), current_user: User = Depends(get
 
 
 @app.get("/execution-chart")
-def execution_chart(db: Session = Depends(get_db)):
+def execution_chart(db: DatabaseSession):
     runs = db.query(TestRun).order_by(TestRun.id).all()
     completed = failed = 0
     data = []
@@ -1265,7 +1273,7 @@ def execution_chart(db: Session = Depends(get_db)):
 
 
 @app.delete("/delete-run/{run_id}")
-def delete_run(run_id: int, db: Session = Depends(get_db)):
+def delete_run(run_id: int, db: DatabaseSession):
     run = db.query(TestRun).filter(TestRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -1277,7 +1285,7 @@ def delete_run(run_id: int, db: Session = Depends(get_db)):
 from fastapi.responses import FileResponse, HTMLResponse
 
 @app.get("/download-report/{run_id}")
-def download_report(run_id: int, db: Session = Depends(get_db)):
+def download_report(run_id: int, db: DatabaseSession):
     report = db.query(Report).filter(Report.execution_id == run_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1331,8 +1339,8 @@ def get_dashboard_report(
         total_reqs = summary_metrics.get("http_reqs", {}).get("count", 0)
         dur = summary_metrics.get("http_req_duration", {})
         avg_rt = round(dur.get("avg", 0.0), 2)
-        p90 = round(dur.get("p(90)", 0.0), 2)
-        p95 = round(dur.get("p(95)", 0.0), 2)
+        p90 = round(dur.get(P90_METRIC, 0.0), 2)
+        p95 = round(dur.get(P95_METRIC, 0.0), 2)
         min_rt = round(dur.get("min", 0.0), 2)
         max_rt = round(dur.get("max", 0.0), 2)
         med_rt = round(dur.get("med", 0.0), 2)

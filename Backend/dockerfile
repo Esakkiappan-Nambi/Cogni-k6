@@ -14,9 +14,9 @@ RUN apk upgrade --no-cache \
     && mkdir -p generated_scripts reports uploads uploaded_csv recorder_sessions \
     && chown -R app:app /app
 
-COPY --chown=app:app *.py ./
-COPY --chown=app:app api_capture ./api_capture
-COPY --chown=app:app router ./router
+COPY *.py ./
+COPY api_capture/auth_capture.py api_capture/capture.py api_capture/correlate.py ./api_capture/
+COPY router/auto_capture.py router/recorder.py ./router/
 
 EXPOSE 8000
 
@@ -25,4 +25,4 @@ USER app
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=2)"
 
-CMD ["uvicorn","main:app","--host","0.0.0.0","--port","8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
