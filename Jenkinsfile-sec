@@ -35,8 +35,12 @@ pipeline {
                     -w "${WORKSPACE}" \
                     semgrep/semgrep \
                     semgrep scan --config auto \
+                      --error \
                       --exclude '**/reports/**' \
                       --exclude '**/venv/**' \
+                      --exclude '**/generated_scripts/**' \
+                      --exclude '**/recorder_sessions/**' \
+                      --exclude '**/node_modules/**' \
                       --json . \
                     > semgrep-results.json
 
@@ -91,8 +95,13 @@ pipeline {
                     -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" \
                     -w "${WORKSPACE}" \
                     aquasec/trivy \
-                    fs --skip-dirs reports --skip-dirs Backend/reports \
+                    fs --exit-code 1 --severity HIGH,CRITICAL \
+                    --skip-dirs reports --skip-dirs Backend/reports \
                     --skip-dirs Backend/venv \
+                    --skip-dirs Backend/generated_scripts \
+                    --skip-dirs Backend/recorder_sessions \
+                    --skip-dirs Frontend/k6-UI/node_modules \
+                    --skip-dirs Frontend/k6-UI/dist \
                     --format json . \
                     > trivy-results.json
 

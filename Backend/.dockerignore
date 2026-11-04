@@ -11,3 +11,4 @@ uploads
 uploaded_csv
 recorder_sessions
 semgrep-report.json
+trivy-*.json

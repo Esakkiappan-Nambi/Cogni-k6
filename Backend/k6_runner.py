@@ -801,7 +801,10 @@ def execute_k6(script_path, run_id, on_process_created=None, on_output_chunk=Non
     # Telemetry streaming: dynamically verify InfluxDB before attaching output
     if is_influxdb_available():
         print("[k6] InfluxDB on localhost:8086 is ONLINE. Also streaming metrics to InfluxDB.")
-        k6_cmd.extend(["--out", "influxdb=http://localhost:8086/k6?pushInterval=5s"])
+        k6_cmd.extend([
+            "--out",
+            "influxdb=http://localhost:8086/k6?pushInterval=5s",  # NOSONAR: loopback-only InfluxDB endpoint.
+        ])
     else:
         print("[k6] InfluxDB offline. Streaming live telemetry natively (no InfluxDB required).")
 
@@ -811,6 +814,8 @@ def execute_k6(script_path, run_id, on_process_created=None, on_output_chunk=Non
         absolute_script_path
     ])
 
+    # Semgrep's compatibility check assumes Python 3.6, but this app targets 3.12.
+    # nosemgrep: python.lang.compatibility.python36.python36-compatibility-Popen1, python.lang.compatibility.python36.python36-compatibility-Popen2
     process = subprocess.Popen(
         k6_cmd,
         stdout=subprocess.PIPE,

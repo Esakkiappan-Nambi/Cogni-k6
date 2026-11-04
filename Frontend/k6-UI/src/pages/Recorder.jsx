@@ -1,10 +1,10 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Radio, Plus, RefreshCw, Upload, PlayCircle, Square,
-  Info, X, Globe, Clock, Filter, ChevronRight,
-  FileCode, Wifi, Settings, Trash2, ArrowRight,
-  Download, Save, Database, History, Check, AlertCircle,
+  Radio, Plus, RefreshCw, Upload, Square,
+  Info, X, Globe, Clock, Filter,
+  FileCode, Wifi, Trash2, ArrowRight,
+  Download, Database, History,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import API from "../services/api";
@@ -42,8 +42,7 @@ function parseHAR(harText) {
       const req = e.request || {};
       const res = e.response || {};
       const url = req.url || "";
-      let body = "";
-      try { body = req.postData?.text || ""; } catch { body = ""; }
+      const body = req.postData?.text || "";
       const headers = {};
       (req.headers || []).forEach((h) => { headers[h.name] = h.value; });
       return {
@@ -94,7 +93,6 @@ export default function Recorder() {
   const [searchFilter, setSearchFilter] = useState("");
   const [selectedReq, setSelectedReq]   = useState(null);
   const [converting, setConverting]     = useState(false);
-  const [loadingSync, setLoadingSync]   = useState(false);
   const pollRef = useRef(null);
 
   const activeSession = sessions.find((s) => s.id === activeId) || sessions[0] || createDefaultSession("Session 1");
@@ -111,7 +109,6 @@ export default function Recorder() {
   // Sync with backend on component mount
   useEffect(() => {
     const fetchBackendSessions = async () => {
-      setLoadingSync(true);
       try {
         const res = await API.get("/recorder/sessions");
         if (res.data?.sessions && Array.isArray(res.data.sessions) && res.data.sessions.length > 0) {
@@ -146,8 +143,6 @@ export default function Recorder() {
         }
       } catch (err) {
         console.warn("Backend /recorder/sessions not reachable yet:", err);
-      } finally {
-        setLoadingSync(false);
       }
     };
 
@@ -173,7 +168,7 @@ export default function Recorder() {
       }
     };
     loadSessionRequests();
-  }, [activeId]);
+  }, [activeId, sessions]);
 
   /* ── polling for live proxy captures ── */
   const startPoll = (sessionId) => {
@@ -235,7 +230,7 @@ export default function Recorder() {
   const stopRecording = async (session) => {
     stopPoll();
     try {
-      const res = await API.post("/recorder/stop", { session_id: session.id });
+      await API.post("/recorder/stop", { session_id: session.id });
       // update backend with latest requests
       await API.post("/recorder/session/save", {
         session_id: session.id,
@@ -335,8 +330,8 @@ export default function Recorder() {
       const steps = activeSession.requests
         .filter((r) => methodFilter === "ALL" || r.method === methodFilter)
         .map((r, i) => {
-          let pathname = "/";
-          try { pathname = new URL(r.url).pathname; } catch {}
+          let pathname;
+          try { pathname = new URL(r.url).pathname; } catch { pathname = "/"; }
           return {
             id: Date.now() + i,
             name: `Step ${i + 1} — ${r.method} ${pathname}`,
@@ -364,7 +359,7 @@ export default function Recorder() {
       sessionStorage.setItem("recorder_import", JSON.stringify(steps));
       toast.success(`${steps.length} request(s) converted — opening Scenario Studio`);
       setTimeout(() => navigate("/createtest"), 800);
-    } catch (err) {
+    } catch {
       toast.error("Conversion failed");
     } finally {
       setConverting(false);
@@ -594,7 +589,7 @@ export default function Recorder() {
               <div className="rec-detail-actions">
                 {activeSession.status === "recording" ? (
                   <button className="btn btn-danger btn-sm" onClick={() => stopRecording(activeSession)}>
-                    <Square size={13} /> Stop & Save
+                    <Square size={13} /> Stop &amp; Save
                   </button>
                 ) : (
                   <>

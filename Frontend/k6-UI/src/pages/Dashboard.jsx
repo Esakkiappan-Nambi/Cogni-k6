@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
   FileText, Activity, CheckCircle, Clock,
   Plus, TrendingUp, ChevronRight, Pencil,
-  PlayCircle, BarChart3, ExternalLink, Zap,
+  PlayCircle, BarChart3, Zap,
   ShieldCheck, Loader2
 } from "lucide-react";
 import API from "../services/api";
@@ -34,31 +34,37 @@ export default function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [triggeringId, setTriggeringId] = useState(null);
+  const isMountedRef = useRef(false);
 
-  useEffect(() => {
-    load();
-    // Auto-refresh stats every 15 seconds
-    const iv = setInterval(() => load(true), 15000);
-    return () => clearInterval(iv);
+  const refresh = useCallback(() => {
+    Promise.all([
+      API.get("/dashboard-stats"),
+      API.get("/recent-tests"),
+      API.get("/telemetry-status").catch(() => ({ data: {} })),
+    ])
+      .then(([statsResponse, recentResponse, telemetryResponse]) => {
+        if (!isMountedRef.current) return;
+        setStats(statsResponse.data || {});
+        setRecent(recentResponse.data || []);
+        if (telemetryResponse.data) setTelemetry(telemetryResponse.data);
+      })
+      .catch((error) => {
+        if (isMountedRef.current) console.error(error);
+      })
+      .finally(() => {
+        if (isMountedRef.current) setLoading(false);
+      });
   }, []);
 
-  const load = async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      const [s, r, t] = await Promise.all([
-        API.get("/dashboard-stats"),
-        API.get("/recent-tests"),
-        API.get("/telemetry-status").catch(() => ({ data: {} })),
-      ]);
-      setStats(s.data   || {});
-      setRecent(r.data  || []);
-      if (t.data) setTelemetry(t.data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    isMountedRef.current = true;
+    refresh();
+    const intervalId = setInterval(refresh, 15000);
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(intervalId);
+    };
+  }, [refresh]);
 
   const handleRunNow = async (testId) => {
     setTriggeringId(testId);
@@ -180,7 +186,7 @@ export default function Dashboard() {
 
           {/* Refresh button */}
           <button
-            onClick={() => load(true)}
+            onClick={refresh}
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               background: "transparent", border: "1px solid var(--border)",

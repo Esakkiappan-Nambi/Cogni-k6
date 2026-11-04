@@ -1,10 +1,6 @@
-import React, {
-    useEffect,
-    useState
-} from "react";
-
-import axios from "axios";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import API from "../services/api";
 
 function ReportList() {
 
@@ -14,29 +10,18 @@ function ReportList() {
     const navigate = useNavigate();
 
     useEffect(() => {
-        fetchReports();
+        let active = true;
+        API.get("/test-runs")
+            .then((response) => {
+                if (active) setReports(response.data || []);
+            })
+            .catch((error) => {
+                console.error(error);
+            });
+        return () => {
+            active = false;
+        };
     }, []);
-
-    const fetchReports =
-    async () => {
-
-        try {
-
-            const response =
-                await axios.get(
-                    "http://127.0.0.1:8000/test-runs"
-                );
-
-            setReports(
-                response.data
-            );
-
-        } catch (error) {
-
-            console.log(error);
-
-        }
-    };
 
     return (
 

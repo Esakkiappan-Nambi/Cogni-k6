@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, FilePlus2, PlayCircle,
@@ -27,13 +27,6 @@ export default function Sidebar() {
   const fullName  = localStorage.getItem("full_name") || "User";
   const initials  = fullName.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
 
-  const [k6Info, setK6Info] = useState({
-    version: "k6.exe v2.2.0",
-    commit:  "commit/00a9a1b7f5",
-    go:      "go 1.26.5, windows/amd64",
-    path:    "C:\\Program Files\\k6\\k6.exe",
-  });
-
   const [theme, setTheme] = useState(() => localStorage.getItem("k6_theme") || "dark");
   const [telemetry, setTelemetry] = useState({
     influxdb_online: false,
@@ -51,10 +44,6 @@ export default function Sidebar() {
       .then((r) => setTelemetry(r.data || {}))
       .catch(() => {});
   }, []);
-
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  };
 
   const handleLogout = () => {
     sessionStorage.clear();

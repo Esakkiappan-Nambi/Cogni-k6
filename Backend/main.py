@@ -7,8 +7,7 @@ from auth import get_current_user
 import re
 import sys
 import time
-import urllib.error
-import urllib.request
+import http.client
 from urllib.parse import urlsplit
 from router.auto_capture import router as auto_capture_router  # ← uncommented & fixed
 from router.recorder import router as recorder_router
@@ -18,11 +17,12 @@ import json
 from auth import hash_password, verify_password, create_access_token
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
+from datetime import datetime, timezone
 import subprocess
 import threading
 from schemas import TestCreate
 import os
+from typing import Annotated
 from swagger_import import discover_apis_from_swagger
 import uuid
 from fastapi import Form, File, UploadFile, BackgroundTasks
@@ -50,7 +50,11 @@ SCRIPT_FOLDER = "generated_scripts"
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173","http://10.10.40.107:5173"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -581,7 +585,7 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
             "failed_requests": 0,
             "passed_checks": 0,
             "active_vus": test_obj.users if test_obj else 1,
-            "started_at": datetime.utcnow().isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat()
         }
 
         def on_started(proc):
@@ -594,15 +598,30 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
                 return
             data["output"] += line
             # Parse real-time k6 output
-            m_reqs = re.search(r'http_reqs\.*:\s*(\d+)\s+([\d\.]+)/s', line)
+            m_reqs = re.search(
+                r'http_reqs[.]*:\s*(\d+)\s+(\d+(?:\.\d+)?)/s',
+                line,
+            )
             if m_reqs:
                 data["total_requests"] = int(m_reqs.group(1))
                 data["throughput"] = float(m_reqs.group(2))
-            m_dur = re.search(r'http_req_duration\.*:\s*avg=([\d\.]+)(m?s).*?p\(90\)=([\d\.]+)(m?s).*?p\(95\)=([\d\.]+)(m?s)', line)
-            if m_dur:
-                data["avg_response_time"] = float(m_dur.group(1))
-                data["p90"] = float(m_dur.group(3))
-                data["p95"] = float(m_dur.group(5))
+            duration_line = re.search(
+                r"http_req_duration[.]*:\s*(.*)",
+                line,
+            )
+            if duration_line:
+                duration_values = dict(
+                    (name, (float(value), unit))
+                    for name, value, unit in re.findall(
+                        r"\b(avg|p\(90\)|p\(95\))="
+                        r"(\d+(?:\.\d+)?)(ms|s)\b",
+                        duration_line.group(1),
+                    )
+                )
+                if {"avg", "p(90)", "p(95)"} <= duration_values.keys():
+                    data["avg_response_time"] = duration_values["avg"][0]
+                    data["p90"] = duration_values["p(90)"][0]
+                    data["p95"] = duration_values["p(95)"][0]
             m_vus = re.search(r'(\d+)/(\d+)\s+VUs', line)
             if m_vus:
                 data["active_vus"] = int(m_vus.group(1))
@@ -981,10 +1000,18 @@ def _preview_url_is_allowed(url: str) -> bool:
 # the user can see actual JSON and pick the right jsonPath — exactly like
 # JMeter's "View Results Tree" sampler preview.
  
-@app.post("/preview-step")
+@app.post(
+    "/preview-step",
+    responses={
+        400: {"description": "Invalid preview request"},
+        403: {"description": "Preview target is not allowed"},
+        502: {"description": "Preview request failed"},
+        504: {"description": "Preview request timed out"},
+    },
+)
 def preview_step(
     payload: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
     method  = (payload.get("method") or "GET").upper()
     url     = payload.get("url")
@@ -1015,6 +1042,8 @@ def preview_step(
             request_kwargs["data"] = body
  
     try:
+        # The URL is allowlisted above, credentials are rejected, and redirects are disabled.
+        # nosemgrep: python.flask.security.injection.ssrf-requests.ssrf-requests
         resp = http_requests.request(method, url, **request_kwargs)
     except http_requests.exceptions.Timeout:
         raise HTTPException(status_code=504, detail="Request timed out (15s)")
@@ -1264,7 +1293,10 @@ def download_report(run_id: int, db: Session = Depends(get_db)):
 # ── Telemetry Health endpoint ───────────────────────────────────────────────
 
 @app.get("/dashboard-report/{run_id}")
-def get_dashboard_report(run_id: int, db: Session = Depends(get_db)):
+def get_dashboard_report(
+    run_id: int,
+    db: Annotated[Session, Depends(get_db)],
+):
     """
     Serves the standalone k6 Web Dashboard HTML report or builds an interactive
     HTML report from summary.json / database. Zero 500 errors.
@@ -1504,7 +1536,7 @@ def get_dashboard_report(run_id: int, db: Session = Depends(get_db)):
 </html>"""
         return HTMLResponse(content=report_html, status_code=200)
 
-    except Exception as e:
+    except Exception:
         # Fallback safe error page (Zero 500 crashes)
         err_html = f"""<!DOCTYPE html>
 <html>
@@ -1523,36 +1555,15 @@ def telemetry_status():
     """
     Checks whether Grafana (port 3000), InfluxDB (port 8086), and k6 Web Dashboard (port 5665) are reachable.
     """
-    grafana_online = False
-    influxdb_online = False
-    k6_dashboard_online = False
-
-    # Check k6 native web dashboard on 5665
-    try:
-        req = urllib.request.Request("http://localhost:5665", headers={"User-Agent": "k6-portal"})
-        with urllib.request.urlopen(req, timeout=0.6) as resp:
-            if resp.status in (200, 301, 302):
-                k6_dashboard_online = True
-    except Exception:
-        k6_dashboard_online = False
-
-    # Check Grafana on 3000
-    try:
-        req = urllib.request.Request("http://localhost:3000/api/health", headers={"User-Agent": "k6-portal"})
-        with urllib.request.urlopen(req, timeout=0.8) as resp:
-            if resp.status == 200:
-                grafana_online = True
-    except Exception:
-        grafana_online = False
-
-    # Check InfluxDB on 8086
-    try:
-        req = urllib.request.Request("http://localhost:8086/ping", headers={"User-Agent": "k6-portal"})
-        with urllib.request.urlopen(req, timeout=0.8) as resp:
-            if resp.status in (200, 204):
-                influxdb_online = True
-    except Exception:
-        influxdb_online = False
+    k6_dashboard_online = _local_service_is_online(
+        5665, "/", (200, 301, 302), timeout=0.6
+    )
+    grafana_online = _local_service_is_online(
+        3000, "/api/health", (200,), timeout=0.8
+    )
+    influxdb_online = _local_service_is_online(
+        8086, "/ping", (200, 204), timeout=0.8
+    )
 
     return {
         "grafana_online": grafana_online,
@@ -1562,6 +1573,22 @@ def telemetry_status():
         "grafana_base_url": "http://localhost:3000",
         "grafana_dashboard_path": "/d/adfqsh7/k6-load-testing-results",
     }
+
+
+def _local_service_is_online(
+    port: int,
+    path: str,
+    expected_statuses: tuple[int, ...],
+    timeout: float,
+) -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request("GET", path, headers={"User-Agent": "k6-portal"})
+        return connection.getresponse().status in expected_statuses
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
 
 
 # ── APScheduler helper ────────────────────────────────────────────────────────

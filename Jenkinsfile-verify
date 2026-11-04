@@ -22,6 +22,7 @@ pipeline {
                 ])
                 sh 'git clean -fdx'
             }
+        }
         stage('Preflight') {
             steps {
                 sh 'command -v jq'
@@ -34,34 +35,47 @@ pipeline {
         stage('Build check') {
             steps {
                 sh '''
-                  docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" node:20 \
-                    bash -c "npm install --no-audit --no-fund && npx tsc --noEmit" \
-                    > build-output.log 2>&1 || true
-                  echo $? > build-exit-code
+                  set +e
+                  docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE/Frontend/k6-UI" node:22-alpine \
+                    sh -c "npm ci --no-audit --no-fund && npm run lint && npm run build" \
+                    > build-output.log 2>&1
+                  BUILD_EXIT_CODE=$?
+                  echo "$BUILD_EXIT_CODE" > build-exit-code
                   cat build-output.log
-                  echo "build exit code: $(cat build-exit-code)"
+                  echo "build exit code: ${BUILD_EXIT_CODE}"
                 '''
             }
         }
 
         stage('Re-scan') {
             steps {
-                sh 'docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" semgrep/semgrep semgrep scan --config auto --exclude "**/reports/**" --exclude "**/venv/**" --json --output semgrep-rescan.json . || true'
-                sh 'docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" aquasec/trivy fs --skip-dirs reports --skip-dirs Backend/reports --skip-dirs Backend/venv --format json --output trivy-rescan.json . || true'
                 sh '''
                   set +e
                   rm -f semgrep-rescan.json trivy-rescan.json
 
                   # Make sure Trivy has a lockfile to read
-                  docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" node:20 \
+                  docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" node:22-alpine \
                     npm install --package-lock-only --no-audit --no-fund
 
                   docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" \
-                    semgrep/semgrep semgrep scan --config auto --no-git-ignore --json --output semgrep-rescan.json .
+                    semgrep/semgrep semgrep scan --config auto \
+                      --error \
+                      --exclude '**/reports/**' --exclude '**/venv/**' \
+                      --exclude '**/generated_scripts/**' \
+                      --exclude '**/recorder_sessions/**' \
+                      --exclude '**/node_modules/**' \
+                      --json --output semgrep-rescan.json .
                   echo $? > semgrep-exit-code
 
                   docker run --rm -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" -w "$WORKSPACE" \
-                    aquasec/trivy fs --format json --output trivy-rescan.json .
+                    aquasec/trivy fs --exit-code 1 --severity HIGH,CRITICAL \
+                      --skip-dirs reports \
+                      --skip-dirs Backend/reports --skip-dirs Backend/venv \
+                      --skip-dirs Backend/generated_scripts \
+                      --skip-dirs Backend/recorder_sessions \
+                      --skip-dirs Frontend/k6-UI/node_modules \
+                      --skip-dirs Frontend/k6-UI/dist \
+                      --format json --output trivy-rescan.json .
                   echo $? > trivy-exit-code
 
                   echo "semgrep exit: $(cat semgrep-exit-code), trivy exit: $(cat trivy-exit-code)"
@@ -80,7 +94,8 @@ build_ok = True
 try:
     with open("build-output.log") as f:
         log = f.read()
-    build_ok = "error TS" not in log
+    with open("build-exit-code") as f:
+        build_ok = f.read().strip() == "0" and "error TS" not in log
 except FileNotFoundError:
     build_ok = False
 
@@ -99,7 +114,7 @@ except (FileNotFoundError, json.JSONDecodeError):
 rescan_clean = (
     len(semgrep_rescan.get("results", [])) == 0
     and all(
-        len(r.get("Vulnerabilities", []) or []) == 0
+        not any(r.get(key) for key in ("Vulnerabilities", "Secrets", "Misconfigurations"))
         for r in trivy_rescan.get("Results", [])
     )
 )

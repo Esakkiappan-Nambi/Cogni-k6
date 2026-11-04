@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../services/api";
 import {
-  FileText, BarChart3, Download, ArrowLeft, Activity,
+  FileText, BarChart3, Download, ArrowLeft,
   CheckCircle, AlertCircle, ExternalLink, Copy, Check, Loader2,
 } from "lucide-react";
 import Layout from "../components/Layout";
@@ -16,12 +16,19 @@ export default function Report() {
   const [downloading, setDownloading] = useState(false);
   const [copied,      setCopied]    = useState(false);
 
-  useEffect(() => { fetchReport(); }, [id]);
-
-  const fetchReport = async () => {
-    try { const r = await API.get(`/report/${id}`); setReport(r.data); }
-    catch { toast.error("Failed to load report"); }
-  };
+  useEffect(() => {
+    let active = true;
+    API.get(`/report/${id}`)
+      .then((r) => {
+        if (active) setReport(r.data);
+      })
+      .catch(() => {
+        if (active) toast.error("Failed to load report");
+      });
+    return () => {
+      active = false;
+    };
+  }, [id]);
 
   const downloadPDF = async () => {
     setDownloading(true);
@@ -86,7 +93,7 @@ export default function Report() {
         <div className="rpt-title-row">
           <div>
             <div className="rpt-title"><FileText size={18} /> {report.test_name} · Execution #{id}</div>
-            <div className="rpt-sub">Generated at {new Date(report.started_at || Date.now()).toLocaleString()}</div>
+            <div className="rpt-sub">Generated at {report.started_at ? new Date(report.started_at).toLocaleString() : "—"}</div>
           </div>
         </div>
         <div className="rpt-actions">

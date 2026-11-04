@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { toast } from "react-toastify";
 import API from "../services/api";
 import {
@@ -91,28 +91,28 @@ export default function History() {
     }
   };
 
-  const fetchRuns = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await API.get("/test-runs");
-      setRuns(r.data || []);
-    } catch {
-      toast.error("Failed to load execution history");
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    let active = true;
+    API.get("/test-runs")
+      .then((r) => {
+        if (active) setRuns(r.data || []);
+      })
+      .catch(() => {
+        if (active) toast.error("Failed to load execution history");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
-
-  useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
   useEffect(() => {
     API.get("/telemetry-status")
       .then((r) => setTelemetry(r.data || {}))
       .catch(() => {});
   }, []);
-
-  // Reset to page 1 when search changes
-  useEffect(() => { setPage(1); }, [search]);
 
   const deleteRun = async (id) => {
     if (!window.confirm("Delete this execution run record?")) return;
@@ -206,7 +206,10 @@ export default function History() {
               <input
                 placeholder="Search by scenario name…"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
                 style={{ width: 240 }}
               />
             </div>
@@ -303,10 +306,10 @@ export default function History() {
                         <span className={statusBadge(r.status)}>{r.status}</span>
                       </td>
                       <td style={{ color: "var(--tx2)", fontSize: 12 }}>
-                        {new Date(r.started_at || Date.now()).toLocaleString("en-GB", {
+                        {r.started_at ? new Date(r.started_at).toLocaleString("en-GB", {
                           day: "2-digit", month: "short", year: "numeric",
                           hour: "2-digit", minute: "2-digit",
-                        })}
+                        }) : "—"}
                       </td>
                       <td style={{ textAlign: "center" }}>
                         <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
@@ -319,7 +322,13 @@ export default function History() {
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
-                            onClick={() => window.open(`http://localhost:8000/dashboard-report/${r.id}`, "_blank")}
+                            onClick={() =>
+                              window.open(
+                                API.getUri({ url: `/dashboard-report/${r.id}` }),
+                                "_blank",
+                                "noopener,noreferrer"
+                              )
+                            }
                             title="View Standalone Live Dashboard (Zero InfluxDB Required)"
                           >
                             <Gauge size={12} /> Dashboard

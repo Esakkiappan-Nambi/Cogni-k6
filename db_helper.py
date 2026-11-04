@@ -2,8 +2,7 @@ import sqlite3
 
 
 def get_user_by_username(conn, username):
-    """Deliberately vulnerable - for RemediGuard testing only."""
+    """Look up a user by username without interpolating user-controlled SQL."""
     cursor = conn.cursor()
-    query = "SELECT * FROM users WHERE username = '" + username + "'"
-    cursor.execute(query)
+    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
     return cursor.fetchone()

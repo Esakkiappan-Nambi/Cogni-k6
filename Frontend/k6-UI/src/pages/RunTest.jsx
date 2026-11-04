@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   PlayCircle, Loader2, Trash2, Pencil, Search, Square,
@@ -6,11 +6,11 @@ import {
   AlertTriangle, RefreshCw, Plus, Activity, BarChart3,
   ChevronLeft, ChevronRight, Users, Clock,
   ArrowUp, ArrowDown, ArrowUpDown, Gauge, CheckCircle2,
-  Zap, ShieldCheck, TrendingUp, Maximize2, Sparkles,
+  Zap, ShieldCheck, TrendingUp,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend
+  XAxis, YAxis, CartesianGrid, Tooltip
 } from "recharts";
 import API from "../services/api";
 import { toast } from "react-toastify";
@@ -164,49 +164,20 @@ export default function RunTest() {
   const autoRef = useRef(null);
 
   /* ── load ─────────────────────────────────────────────────── */
-  const loadTests = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+  const loadTests = useCallback(async () => {
     try {
       const r = await API.get("/tests");
       setTests(r.data || []);
     } catch { /* ignore */ }
-    finally { if (!silent) setLoading(false); }
+    finally { setLoading(false); }
   }, []);
 
   const loadTelemetry = useCallback(() => {
     API.get("/telemetry-status").then((r) => setTelemetry(r.data || {})).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    loadTests();
-    loadTelemetry();
-
-    // Auto-refresh every 4s to catch externally running tests
-    autoRef.current = setInterval(async () => {
-      try {
-        const r   = await API.get("/tests");
-        const all = r.data || [];
-        setTests(all);
-        const running = all.find((t) => t.status === "running");
-        if (running && !runningTestId) {
-          setRunningTestId(running.id);
-          const rr = await API.get(`/latest-run/${running.id}`);
-          if (rr.data?.run_id) {
-            setActiveRunId(rr.data.run_id);
-            pollForResult(running.id, rr.data.run_id);
-          }
-        }
-      } catch { /* ignore */ }
-    }, 4000);
-
-    return () => {
-      if (pollRef.current)  clearInterval(pollRef.current);
-      if (autoRef.current)  clearInterval(autoRef.current);
-    };
-  }, [loadTests, loadTelemetry, runningTestId]);
-
   /* ── poll live results ─────────────────────────────────────── */
-  const pollForResult = (testId, runId) => {
+  const pollForResult = useCallback((testId, runId) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
@@ -254,7 +225,7 @@ export default function RunTest() {
           if (r.status === "completed")     toast.success("✓ Test completed successfully!");
           else if (r.status === "stopped")  toast.info("Test stopped.");
           else                              toast.error("Test finished with errors.");
-          loadTests(true);
+          loadTests();
         }
       } catch {
         clearInterval(pollRef.current);
@@ -262,7 +233,36 @@ export default function RunTest() {
         setRunningTestId(null);
       }
     }, 1200); // 1.2s smooth polling
-  };
+  }, [loadTests]);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      loadTests();
+      loadTelemetry();
+    });
+
+    autoRef.current = setInterval(async () => {
+      try {
+        const r = await API.get("/tests");
+        const all = r.data || [];
+        setTests(all);
+        const running = all.find((t) => t.status === "running");
+        if (running && !runningTestId) {
+          setRunningTestId(running.id);
+          const rr = await API.get(`/latest-run/${running.id}`);
+          if (rr.data?.run_id) {
+            setActiveRunId(rr.data.run_id);
+            pollForResult(running.id, rr.data.run_id);
+          }
+        }
+      } catch { /* ignore */ }
+    }, 4000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (autoRef.current) clearInterval(autoRef.current);
+    };
+  }, [loadTests, loadTelemetry, pollForResult, runningTestId]);
 
   /* ── run ──────────────────────────────────────────────────── */
   const runTest = async (testId) => {
@@ -694,7 +694,15 @@ export default function RunTest() {
                 <>
                   <button
                     className="btn btn-outline btn-sm"
-                    onClick={() => window.open(`http://localhost:8000/dashboard-report/${lastDashboardRunId || activeRunId}`, "_blank")}
+                    onClick={() =>
+                      window.open(
+                        API.getUri({
+                          url: `/dashboard-report/${lastDashboardRunId || activeRunId}`,
+                        }),
+                        "_blank",
+                        "noopener,noreferrer"
+                      )
+                    }
                     title="Open standalone HTML performance report"
                   >
                     <ExternalLink size={13} /> HTML Report

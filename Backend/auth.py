@@ -24,7 +24,7 @@ ACCESS_TOKEN_EXPIRE_HOURS = int(
 )
 
 if not SECRET_KEY:
-    raise ValueError("SECRET_KEY not found in .env")
+    raise ValueError("SECRET_KEY must be set in the environment or .env file")
 if ALGORITHM.startswith("HS") and len(SECRET_KEY.encode("utf-8")) < 32:
     raise ValueError("SECRET_KEY must be at least 32 bytes for HMAC JWT algorithms")
 

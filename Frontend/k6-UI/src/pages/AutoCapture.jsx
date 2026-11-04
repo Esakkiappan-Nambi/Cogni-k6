@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 const DEFAULT_OPTS = { wait_ms:   6000,
     interact:  false,

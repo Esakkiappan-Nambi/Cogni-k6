@@ -1,14 +1,22 @@
-FROM python:3.12
+FROM python:3.12-alpine
 
 WORKDIR /app
+ENV CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apk upgrade --no-cache \
+    && pip install --no-cache-dir -r requirements.txt \
+    && python -m pip install --no-cache-dir --upgrade pip setuptools \
+    && python -m pip uninstall -y setuptools pip \
+    && addgroup -S app \
+    && adduser -S -G app app \
+    && mkdir -p generated_scripts reports uploads uploaded_csv recorder_sessions \
+    && chown -R app:app /app
 
-RUN addgroup --system app && adduser --system --ingroup app app && chown app:app /app
-
-COPY --chown=app:app . .
+COPY --chown=app:app *.py ./
+COPY --chown=app:app api_capture ./api_capture
+COPY --chown=app:app router ./router
 
 EXPOSE 8000
 

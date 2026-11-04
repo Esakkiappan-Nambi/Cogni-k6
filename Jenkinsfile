@@ -90,11 +90,15 @@ pipeline {
 
                     semgrep \
                         --config=auto \
+                        --error \
                         --exclude='**/reports/**' \
                         --exclude='**/venv/**' \
+                        --exclude='**/generated_scripts/**' \
+                        --exclude='**/recorder_sessions/**' \
+                        --exclude='**/node_modules/**' \
                         --json \
                         --output="${REPORT_DIR}/semgrep-report.json" \
-                        . || true
+                        .
                 '''
             }
         }
@@ -106,9 +110,15 @@ pipeline {
 
                     trivy fs \
                         --scanners vuln,secret,misconfig \
+                        --exit-code 1 \
+                        --severity HIGH,CRITICAL \
                         --skip-dirs reports \
                         --skip-dirs Backend/reports \
                         --skip-dirs Backend/venv \
+                        --skip-dirs Backend/generated_scripts \
+                        --skip-dirs Backend/recorder_sessions \
+                        --skip-dirs Frontend/k6-UI/node_modules \
+                        --skip-dirs Frontend/k6-UI/dist \
                         --format json \
                         --output "${REPORT_DIR}/trivy-report.json" \
                         . || true
@@ -145,7 +155,8 @@ pipeline {
 
                             "${SCANNER_HOME}/bin/sonar-scanner" \
                                 -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
-                                -Dsonar.sources=. \
+                                -Dsonar.sources=Backend,Frontend/k6-UI/src,db_helper.py \
+                                -Dsonar.exclusions="**/reports/**,**/venv/**,**/generated_scripts/**,**/recorder_sessions/**,**/node_modules/**,**/uploads/**,**/uploaded_csv/**,**/dist/**,**/coverage/**" \
                                 -Dsonar.host.url="${SONAR_HOST_URL}" \
                                 -Dsonar.token="${SONAR_TOKEN}"
                         '''
@@ -174,7 +185,29 @@ pipeline {
                     sh '''
                         echo "Fetching SonarQube issues..."
 
-                        curl --fail --silent --show-error --get -u "${SONAR_TOKEN}:" --data-urlencode "componentKeys=${SONAR_PROJECT_KEY}" --data-urlencode "ps=500" "${SONAR_HOST_URL}/api/issues/search" -o "${REPORT_DIR}/sonarqube-report.json"
+                        PAGE=1
+                        TOTAL=1
+                        PAGE_SIZE=500
+                        REPORT="${REPORT_DIR}/sonarqube-report.json"
+                        echo '{"issues":[],"total":0}' > "${REPORT}"
+
+                        while [ $(((PAGE - 1) * PAGE_SIZE)) -lt "${TOTAL}" ]; do
+                            curl --fail --silent --show-error --get -u "${SONAR_TOKEN}:" \
+                                --data-urlencode "componentKeys=${SONAR_PROJECT_KEY}" \
+                                --data-urlencode "ps=${PAGE_SIZE}" \
+                                --data-urlencode "p=${PAGE}" \
+                                "${SONAR_HOST_URL}/api/issues/search" \
+                                -o "${REPORT_DIR}/sonarqube-page.json"
+
+                            TOTAL=$(jq -r '.total // 0' "${REPORT_DIR}/sonarqube-page.json")
+                            jq -s '{issues: (.[0].issues + .[1].issues), total: .[1].total}' \
+                                "${REPORT}" "${REPORT_DIR}/sonarqube-page.json" \
+                                > "${REPORT_DIR}/sonarqube-merged.json"
+                            mv "${REPORT_DIR}/sonarqube-merged.json" "${REPORT}"
+                            PAGE=$((PAGE + 1))
+                        done
+
+                        rm -f "${REPORT_DIR}/sonarqube-page.json"
                     '''
                 }
             }
@@ -198,7 +231,7 @@ pipeline {
                     docker build -t "${FRONTEND_IMAGE}" ./Frontend/k6-UI
 
                     echo "Building backend image..."
-                    docker build -t "${BACKEND_IMAGE}" ./Backend
+                    docker build -f ./Backend/dockerfile -t "${BACKEND_IMAGE}" ./Backend
                 '''
             }
         }
@@ -209,9 +242,11 @@ pipeline {
                     echo "Scanning frontend image..."
                     trivy image \
                         --scanners vuln \
+                        --exit-code 1 \
+                        --severity HIGH,CRITICAL \
                         --format json \
                         --output "${REPORT_DIR}/trivy-frontend-image.json" \
-                        "${FRONTEND_IMAGE}" || true
+                        "${FRONTEND_IMAGE}"
                 '''
             }
         }
@@ -222,9 +257,11 @@ pipeline {
                     echo "Scanning backend image..."
                     trivy image \
                         --scanners vuln \
+                        --exit-code 1 \
+                        --severity HIGH,CRITICAL \
                         --format json \
                         --output "${REPORT_DIR}/trivy-backend-image.json" \
-                        "${BACKEND_IMAGE}" || true
+                        "${BACKEND_IMAGE}"
                 '''
             }
         }

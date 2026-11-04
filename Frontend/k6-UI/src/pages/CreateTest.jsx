@@ -1,8 +1,8 @@
 import { useNavigate, useParams } from "react-router-dom";
-import React, { useState, useEffect, useRef } from "react";
-import { GripVertical, Clock, Globe, Zap, Edit3, Info, Play, ChevronDown, ChevronUp, Search, Link2, Loader2, AlertCircle, Activity, Plus as PlusIcon } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { GripVertical, Globe, Zap, Info, Play, ChevronDown, ChevronUp, Search, Link2, Loader2, AlertCircle, Activity } from "lucide-react";
 import API from "../services/api";
-import { FilePlus, PlayCircle, ArrowLeft, Plus, Trash2, Copy, KeyRound, Shield, Lock, User, Eye, EyeOff, CheckCircle } from "lucide-react";
+import { FilePlus, PlayCircle, Plus, Trash2, Copy, KeyRound, Shield, Lock, User, Eye, EyeOff, CheckCircle } from "lucide-react";
 import { toast } from "react-toastify";
 import "./CreateTest.css";
 import Layout from "../components/Layout";
@@ -121,15 +121,23 @@ const resolveJsonPath = (obj, path) => {
   let current = obj;
   for (const part of parts) {
     if (current == null) return undefined;
-    const arrayMatch = part.match(/^([^\[\]]+)((?:\[\d+\])*)$/);
+    const arrayMatch = part.match(/^([^[\]]+)((?:\[\d+\])*)$/);
     if (!arrayMatch) return undefined;
     const [, key, indexChain] = arrayMatch;
-    if (key) current = current[key];
+    if (key) {
+      if (current == null || typeof current !== "object" ||
+          ["__proto__", "prototype", "constructor"].includes(key)) return undefined;
+      const property = Object.getOwnPropertyDescriptor(current, key);
+      if (!property) return undefined;
+      current = property.value;
+    }
     if (indexChain) {
       const indices = [...indexChain.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
       for (const idx of indices) {
-        if (current == null) return undefined;
-        current = current[idx];
+        if (current == null || !Array.isArray(current)) return undefined;
+        const property = Object.getOwnPropertyDescriptor(current, idx);
+        if (!property) return undefined;
+        current = property.value;
       }
     }
   }
@@ -160,7 +168,7 @@ function CreateTest() {
   const [authPasswordSelector, setAuthPasswordSelector] = useState("");
   const [authSubmitSelector, setAuthSubmitSelector]     = useState("");
   const [authSuccessUrl, setAuthSuccessUrl]             = useState("");
-  const [authLoginTimeout, setAuthLoginTimeout]         = useState(15000);
+  const authLoginTimeout = 15000;
   const [authShowAdvanced, setAuthShowAdvanced]         = useState(false);
   const [authCaptureMeta, setAuthCaptureMeta]           = useState(null);
   
@@ -226,7 +234,7 @@ function CreateTest() {
   });
 
   const defaultStep = () => ({
-    id: Date.now(),
+    id: "initial-step",
     name: `Request 1`,
     method: "GET",
     url: "",
@@ -248,36 +256,42 @@ function CreateTest() {
     retry: defaultRetry(),
   });
 
-  const [scenario, setScenario] = useState([defaultStep()]);
-
-  useEffect(() => {
-    if (id) loadTestData();
-  }, [id]);
+  const [scenario, setScenario] = useState(() => {
+    if (id) return [defaultStep()];
+    const imported = sessionStorage.getItem("recorder_import");
+    if (!imported) return [defaultStep()];
+    try {
+      const steps = JSON.parse(imported);
+      return Array.isArray(steps) ? steps : [defaultStep()];
+    } catch {
+      return [defaultStep()];
+    }
+  });
 
   // Load steps imported from the HTTP Recorder
   useEffect(() => {
     const imported = sessionStorage.getItem("recorder_import");
     if (imported && !id) {
+      sessionStorage.removeItem("recorder_import");
       try {
         const steps = JSON.parse(imported);
-        setScenario(steps);
-        setMode("manual");
-        sessionStorage.removeItem("recorder_import");
+        if (!Array.isArray(steps)) throw new Error("Recorder import must contain an array of steps.");
         toast.success(`${steps.length} request(s) imported from HTTP Recorder`);
-      } catch { /* ignore */ }
-    }
-  }, []);
-
-  const loadTestData = async () => {
-    try {
-      const res = await API.get(`/test/${id}`);
-      const test = res.data;
-      let parsedSchedule = defaultSchedule();
-      if (test.schedule) {
-        try { parsedSchedule = { ...defaultSchedule(), ...JSON.parse(test.schedule) }; }
-        catch { parsedSchedule = defaultSchedule(); }
+      } catch {
+        toast.error("Could not import recorder steps.");
       }
-      setFormData({
+    }
+  }, [id]);
+
+  const loadTestData = useCallback(async () => {
+    const res = await API.get(`/test/${id}`);
+    const test = res.data;
+    let parsedSchedule = defaultSchedule();
+    if (test.schedule) {
+      try { parsedSchedule = { ...defaultSchedule(), ...JSON.parse(test.schedule) }; }
+      catch { parsedSchedule = defaultSchedule(); }
+    }
+    const formData = {
         testName: test.test_name,
         users: test.users,
         duration: test.duration,
@@ -295,18 +309,34 @@ function CreateTest() {
         assertions: test.assertions ? JSON.parse(test.assertions) : { status_code: 200, max_response_time: 500, max_error_rate: 1 },
         csvConfig: { file: null, variable_name: test.csv_variables || "" },
         cookieConfig: { clearEachIteration: !!test.cookie_clear_each_iteration, policy: test.cookie_policy || "strict" },
-      });
-      const loadedScenario = test.scenario ? JSON.parse(test.scenario) : [];
-      setScenario(loadedScenario.map((step) => ({
+    };
+    const loadedScenario = test.scenario ? JSON.parse(test.scenario) : [];
+    const scenario = loadedScenario.map((step) => ({
         ...step,
         assertions: { ...step.assertions, text_assertions: step.assertions?.text_assertions || [] },
         retry: step.retry ?? defaultRetry(),
-      })));
-    } catch (error) {
-      console.error(error);
-      toast.error("Failed to load test!");
-    }
-  };
+    }));
+    return { formData, scenario };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let active = true;
+    loadTestData()
+      .then(({ formData, scenario: loadedScenario }) => {
+        if (!active) return;
+        setFormData(formData);
+        setScenario(loadedScenario);
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error(error);
+        toast.error("Failed to load test!");
+      });
+    return () => {
+      active = false;
+    };
+  }, [id, loadTestData]);
 
   // ── Auto Capture handlers ─────────────────────────────────────────────────
 
@@ -552,7 +582,6 @@ function CreateTest() {
   const addUDV = () => setFormData((prev) => ({ ...prev, userDefinedVariables: [...prev.userDefinedVariables, defaultUDV()] }));
   const updateUDV = (udvId, field, value) => setFormData((prev) => ({ ...prev, userDefinedVariables: prev.userDefinedVariables.map((v) => v.id === udvId ? { ...v, [field]: value } : v) }));
   const removeUDV = (udvId) => setFormData((prev) => ({ ...prev, userDefinedVariables: prev.userDefinedVariables.filter((v) => v.id !== udvId) }));
-  const toggleAllUDV = (checked) => setFormData((prev) => ({ ...prev, userDefinedVariables: prev.userDefinedVariables.map((v) => ({ ...v, enabled: checked })) }));
 
   // ── Scenario helpers ──────────────────────────────────────────────────────
   const addScenarioStep = () => {
@@ -716,7 +745,7 @@ function CreateTest() {
     const step = scenario.find((s) => s.id === stepId);
     if (!step) return;
     const segments = path.split(/[.[]/).filter(Boolean);
-    const lastSegment = segments.length ? segments[segments.length - 1].replace("]", "") : "value";
+    const lastSegment = segments.length ? segments[segments.length - 1].replaceAll("]", "") : "value";
     setScenario((prev) =>
       prev.map((s) =>
         s.id === stepId
@@ -861,7 +890,7 @@ function CreateTest() {
           <div style={{ display:"flex",gap:8 }}>
             <button className="btn btn-ghost" onClick={() => navigate("/run-test")}>Cancel</button>
             <button className="btn btn-primary" form="ct-form" type="submit">
-              <FilePlus size={14} /> Save & Proceed
+              <FilePlus size={14} /> Save &amp; Proceed
             </button>
           </div>
         </div>
