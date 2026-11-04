@@ -58,7 +58,8 @@ export default function ExecutionChart() {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={290}>
+    <div style={{ width: "100%", height: 260 }}>
+    <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={data} margin={{ top: 10, right: 20, left: -15, bottom: 5 }}>
         <defs>
           <linearGradient id="passedGradient" x1="0" y1="0" x2="0" y2="1">
@@ -108,5 +109,6 @@ export default function ExecutionChart() {
         />
       </AreaChart>
     </ResponsiveContainer>
+    </div>
   );
 }

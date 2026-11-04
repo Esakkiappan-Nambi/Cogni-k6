@@ -6,7 +6,12 @@ import {
   AlertTriangle, RefreshCw, Plus, Activity, BarChart3,
   ChevronLeft, ChevronRight, Users, Clock,
   ArrowUp, ArrowDown, ArrowUpDown, Gauge, CheckCircle2,
+  Zap, ShieldCheck, TrendingUp, Maximize2, Sparkles,
 } from "lucide-react";
+import {
+  ResponsiveContainer, AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend
+} from "recharts";
 import API from "../services/api";
 import { toast } from "react-toastify";
 import Layout from "../components/Layout";
@@ -79,6 +84,33 @@ function Pagination({ total, page, setPage }) {
   );
 }
 
+const CustomChartTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: "rgba(15, 23, 42, 0.95)",
+      border: "1px solid rgba(255, 255, 255, 0.15)",
+      borderRadius: 8,
+      padding: "10px 14px",
+      fontSize: 12,
+      boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+    }}>
+      <p style={{ color: "#94a3b8", marginBottom: 6, fontWeight: 600 }}>Time: {label}</p>
+      {payload.map((entry) => (
+        <div key={entry.name} style={{ display: "flex", justifyContent: "space-between", gap: 14, margin: "3px 0" }}>
+          <span style={{ color: entry.color, display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: entry.color }} />
+            {entry.name}:
+          </span>
+          <strong style={{ color: "#f8fafc", fontFamily: "'Consolas', monospace" }}>
+            {entry.value} {entry.name.includes("Latency") ? "ms" : "req/s"}
+          </strong>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export default function RunTest() {
   const navigate = useNavigate();
 
@@ -89,20 +121,35 @@ export default function RunTest() {
   const [stoppingId,     setStoppingId]     = useState(null);
   const [deletingId,     setDeletingId]     = useState(null);
   const [output,         setOutput]         = useState("");
-  const [grafanaUrl,     setGrafanaUrl]     = useState("");
   const [search,         setSearch]         = useState("");
   const [copied,         setCopied]         = useState(false);
   const [page,           setPage]           = useState(1);
   const [sortBy,         setSortBy]         = useState("created_at");
   const [sortOrder,      setSortOrder]      = useState("desc");
-  const [activeTab,      setActiveTab]      = useState("k6"); // "k6" | "grafana"
+  const [activeTab,      setActiveTab]      = useState("metrics"); // "metrics" | "grafana"
+  const [lastDashboardRunId, setLastDashboardRunId] = useState(null);
   const [telemetry,      setTelemetry]      = useState({
-    grafana_online: false, influxdb_online: false,
-    k6_dashboard_online: true,
-    k6_web_dashboard_url: "http://localhost:5665",
-    grafana_base_url: "http://localhost:3000",
-    grafana_dashboard_path: "/d/adfqsh7/k6-load-testing-results",
+    grafana_online: false,
+    influxdb_online: false,
   });
+
+  // ── Native Live Metrics State ──────────────────────────────────────────
+  const [liveMetrics, setLiveMetrics] = useState({
+    throughput: 0,
+    avg_response_time: 0,
+    min_response_time: 0,
+    max_response_time: 0,
+    p90: 0,
+    p95: 0,
+    error_rate: 0,
+    total_requests: 0,
+    failed_requests: 0,
+    passed_checks: 0,
+    active_vus: 0,
+    status: "idle",
+  });
+
+  const [telemetryHistory, setTelemetryHistory] = useState([]);
 
   const handleSort = (field) => {
     if (sortBy === field) {
@@ -113,8 +160,8 @@ export default function RunTest() {
     }
   };
 
-  const pollRef   = useRef(null);
-  const autoRef   = useRef(null);
+  const pollRef = useRef(null);
+  const autoRef = useRef(null);
 
   /* ── load ─────────────────────────────────────────────────── */
   const loadTests = useCallback(async (silent = false) => {
@@ -134,7 +181,7 @@ export default function RunTest() {
     loadTests();
     loadTelemetry();
 
-    // Auto-refresh every 4s — detect externally started runs
+    // Auto-refresh every 4s to catch externally running tests
     autoRef.current = setInterval(async () => {
       try {
         const r   = await API.get("/tests");
@@ -146,7 +193,6 @@ export default function RunTest() {
           const rr = await API.get(`/latest-run/${running.id}`);
           if (rr.data?.run_id) {
             setActiveRunId(rr.data.run_id);
-            buildGrafanaUrl(rr.data.run_id);
             pollForResult(running.id, rr.data.run_id);
           }
         }
@@ -157,31 +203,57 @@ export default function RunTest() {
       if (pollRef.current)  clearInterval(pollRef.current);
       if (autoRef.current)  clearInterval(autoRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadTests, loadTelemetry, runningTestId]);
 
-  /* ── grafana URL ──────────────────────────────────────────── */
-  const buildGrafanaUrl = (runId) => {
-    const base = telemetry.grafana_base_url || "http://localhost:3000";
-    const path = telemetry.grafana_dashboard_path || "/d/adfqsh7/k6-load-testing-results";
-    setGrafanaUrl(`${base}${path}?var-run_id=${runId}&refresh=5s&from=now-5m&to=now&kiosk=tv`);
-  };
-
-  /* ── poll ─────────────────────────────────────────────────── */
+  /* ── poll live results ─────────────────────────────────────── */
   const pollForResult = (testId, runId) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
         const { data: r } = await API.get(`/report/${runId}`);
         if (r.output) setOutput(r.output);
+
+        const currentTps = Number(r.throughput || 0);
+        const currentRt  = Number(r.avg_response_time || 0);
+        const currentVus = Number(r.active_vus || 1);
+
+        setLiveMetrics({
+          throughput: currentTps,
+          avg_response_time: currentRt,
+          min_response_time: Number(r.min_response_time || 0),
+          max_response_time: Number(r.max_response_time || 0),
+          p90: Number(r.p90 || 0),
+          p95: Number(r.p95 || 0),
+          error_rate: Number(r.error_rate || 0),
+          total_requests: Number(r.total_requests || 0),
+          failed_requests: Number(r.failed_requests || 0),
+          passed_checks: Number(r.passed_checks || 0),
+          active_vus: currentVus,
+          status: r.status || "running",
+        });
+
+        // Push time-series point to live chart
+        setTelemetryHistory((prev) => {
+          const nowStr = new Date().toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          const newPoint = {
+            time: nowStr,
+            rps: Math.round(currentTps * 10) / 10,
+            latency: Math.round(currentRt * 10) / 10,
+            vus: currentVus,
+          };
+          const slice = [...prev, newPoint];
+          return slice.slice(-25); // keep latest 25 readings
+        });
+
         if (r.status !== "running" && r.status !== "stopping") {
           clearInterval(pollRef.current);
           pollRef.current = null;
           setTests((p) => p.map((t) => t.id === testId ? { ...t, status: r.status } : t));
           setRunningTestId(null);
+          setLastDashboardRunId(runId);
           if (r.status === "completed")     toast.success("✓ Test completed successfully!");
           else if (r.status === "stopped")  toast.info("Test stopped.");
-          else                              toast.error("Test completed with failures.");
+          else                              toast.error("Test finished with errors.");
           loadTests(true);
         }
       } catch {
@@ -189,19 +261,40 @@ export default function RunTest() {
         pollRef.current = null;
         setRunningTestId(null);
       }
-    }, 3000);
+    }, 1200); // 1.2s smooth polling
   };
 
   /* ── run ──────────────────────────────────────────────────── */
   const runTest = async (testId) => {
     setRunningTestId(testId);
     setOutput("");
+    setTelemetryHistory([]);
+    setLiveMetrics({
+      throughput: 0,
+      avg_response_time: 0,
+      min_response_time: 0,
+      max_response_time: 0,
+      p90: 0,
+      p95: 0,
+      error_rate: 0,
+      total_requests: 0,
+      failed_requests: 0,
+      passed_checks: 0,
+      active_vus: 1,
+      status: "running",
+    });
     setTests((p) => p.map((t) => t.id === testId ? { ...t, status: "running" } : t));
+
+    // Smooth scroll down to live telemetry studio
+    setTimeout(() => {
+      const el = document.getElementById("live-telemetry-studio");
+      if (el) el.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+
     try {
       const res   = await API.post(`/run-test/${testId}`);
       const runId = res.data.run_id;
       setActiveRunId(runId);
-      buildGrafanaUrl(runId);
       toast.info(`Test #${testId} started — Run #${runId}`);
       pollForResult(testId, runId);
     } catch (err) {
@@ -213,185 +306,144 @@ export default function RunTest() {
 
   /* ── stop ─────────────────────────────────────────────────── */
   const stopTest = async (testId) => {
-    if (!window.confirm("Stop this running test?")) return;
+    if (!window.confirm("Stop this running test immediately?")) return;
     setStoppingId(testId);
     try {
       await API.post(`/stop-test/${testId}`);
-      setTests((p) => p.map((t) => t.id === testId ? { ...t, status: "stopping" } : t));
-      toast.info("Stop signal sent.");
-    } catch { toast.error("Failed to stop test"); }
-    finally  { setStoppingId(null); }
+      toast.info("Stopping test…");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to stop test");
+    } finally {
+      setStoppingId(null);
+    }
   };
 
   /* ── delete ───────────────────────────────────────────────── */
   const deleteTest = async (testId) => {
-    if (!window.confirm("Delete this test plan?")) return;
+    if (!window.confirm(`Delete test #${testId}? This action cannot be undone.`)) return;
     setDeletingId(testId);
     try {
       await API.delete(`/delete-test/${testId}`);
+      toast.success("Test deleted successfully");
       setTests((p) => p.filter((t) => t.id !== testId));
-      toast.success("Test deleted.");
-    } catch { toast.error("Delete failed"); }
-    finally  { setDeletingId(null); }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to delete test");
+    } finally {
+      setDeletingId(null);
+    }
   };
 
-  /* ── copy output ──────────────────────────────────────────── */
   const copyOutput = () => {
     navigator.clipboard.writeText(output);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast.success("Copied to clipboard");
+    toast.success("Copied console output");
   };
 
-  /* ── derived with enterprise sorting ───────────────────────── */
-  const sortedTests = useMemo(() => {
-    return [...tests].sort((a, b) => {
-      let aVal = a[sortBy];
-      let bVal = b[sortBy];
+  /* ── filter & sort ────────────────────────────────────────── */
+  const filtered = useMemo(() => {
+    return tests
+      .filter((t) =>
+        t.test_name?.toLowerCase().includes(search.toLowerCase()) ||
+        String(t.id).includes(search) ||
+        t.status?.toLowerCase().includes(search.toLowerCase())
+      )
+      .sort((a, b) => {
+        let valA = a[sortBy];
+        let valB = b[sortBy];
 
-      if (sortBy === "created_at") {
-        aVal = new Date(aVal || 0).getTime();
-        bVal = new Date(bVal || 0).getTime();
-      } else if (sortBy === "test_name" || sortBy === "status") {
-        aVal = (aVal || "").toString().toLowerCase();
-        bVal = (bVal || "").toString().toLowerCase();
-      } else {
-        aVal = Number(aVal || 0);
-        bVal = Number(bVal || 0);
-      }
+        if (sortBy === "id" || sortBy === "users" || sortBy === "duration") {
+          valA = Number(valA || 0);
+          valB = Number(valB || 0);
+          return sortOrder === "asc" ? valA - valB : valB - valA;
+        }
 
-      if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
-      return 0;
-    });
-  }, [tests, sortBy, sortOrder]);
+        if (sortBy === "created_at") {
+          const dateA = new Date(valA || 0).getTime();
+          const dateB = new Date(valB || 0).getTime();
+          return sortOrder === "asc" ? dateA - dateB : dateB - dateA;
+        }
 
-  const filtered    = useMemo(() => {
-    return sortedTests.filter((t) =>
-      t.test_name.toLowerCase().includes(search.toLowerCase())
-    );
-  }, [sortedTests, search]);
+        valA = String(valA || "").toLowerCase();
+        valB = String(valB || "").toLowerCase();
+        if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+        if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+        return 0;
+      });
+  }, [tests, search, sortBy, sortOrder]);
 
-  const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage    = Math.min(page, totalPages);
-  const paginated   = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-  // Reset to page 1 when search changes
-  useEffect(() => { setPage(1); }, [search]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage   = Math.min(page, totalPages);
+  const paginated  = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <Layout>
-      {/* ═══════════════════════════════════════════════════
-          PAGE HEADER  (matches screenshot 3)
-          ═══════════════════════════════════════════════════ */}
-      <div className="page-header">
-        <div className="page-header-left">
-          <div className="page-header-title">Run & Live Monitoring</div>
-          <div className="page-header-sub">Execute test scenarios and stream live terminal telemetry</div>
-        </div>
-        <div className="page-header-right">
-          <button className="btn btn-primary" onClick={() => navigate("/createtest")}>
-            <Plus size={14} /> New Test
-          </button>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "var(--bg3)", border: "1px solid var(--border)",
-            borderRadius: "var(--r)", padding: "6px 14px",
-            fontSize: 13, color: "var(--tx2)",
-          }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--brand)", flexShrink: 0 }} />
-            {localStorage.getItem("full_name") || "User"}
+      <div className="run-test-page">
+
+        {/* ── Page Header ── */}
+        <div className="page-header">
+          <div className="page-header-left">
+            <div className="page-header-title">Run & Live Monitor</div>
+            <div className="page-header-sub">
+              Execute high-concurrency load tests, inspect live metrics, and view real-time latency graphs
+            </div>
+          </div>
+          <div className="page-header-right">
+            <div style={{
+              display: "flex", alignItems: "center", gap: 7,
+              background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)",
+              borderRadius: "9999px", padding: "5px 12px",
+              fontSize: 12, color: "#34d399", fontWeight: 600,
+            }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
+              Native k6 Telemetry: Active
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="rt-body">
+        {/* ── Search & Sorting Bar ── */}
+        <div className="rt-table-toolbar">
+          <div className="rt-search-wrap">
+            <Search size={14} className="rt-search-icon" />
+            <input
+              type="text"
+              className="rt-search-input"
+              placeholder="Filter scenarios by name, ID, or status…"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+          </div>
 
-        {/* ── Active run banner ── */}
-        {runningTestId && (
-          <div className="rt-run-banner">
-            <div className="rt-run-banner-left">
-              <Loader2 size={22} className="spinner" style={{ color: "var(--brand-l)" }} />
-              <div>
-                <h4>Test #{runningTestId} is currently executing…</h4>
-                <p>
-                  Run ID: <strong>#{activeRunId || "—"}</strong> ·
-                  Real-time metrics streaming on <strong>http://localhost:5665</strong> (Zero InfluxDB required)
-                </p>
-              </div>
-            </div>
-            <div className="rt-run-banner-actions">
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={() => window.open("http://localhost:5665", "_blank")}
-                style={{ background: "#4f46e5", color: "#fff" }}
-              >
-                <Gauge size={13} /> k6 Live Dashboard (5665)
-              </button>
-              {activeRunId && (
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => window.open(grafanaUrl.replace("&kiosk=tv", ""), "_blank")}
+          <div className="rt-toolbar-actions">
+            {/* Executive Sort Toolbar */}
+            <div className="sort-toolbar-group">
+              <span className="sort-toolbar-label">
+                <ArrowUpDown size={12} /> Sort:
+              </span>
+              <div className="sort-select-box">
+                <select
+                  className="sort-select-input"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
                 >
-                  <ExternalLink size={13} /> Grafana Live
-                </button>
-              )}
+                  <option value="created_at">Date Created</option>
+                  <option value="test_name">Scenario Name</option>
+                  <option value="users">Virtual Users (VUs)</option>
+                  <option value="duration">Duration</option>
+                  <option value="status">Execution Status</option>
+                  <option value="id">Scenario ID</option>
+                </select>
+              </div>
               <button
-                className="btn btn-danger btn-sm"
-                disabled={stoppingId === runningTestId}
-                onClick={() => stopTest(runningTestId)}
+                type="button"
+                className="sort-dir-btn"
+                title={`Order: ${sortOrder === "asc" ? "Ascending" : "Descending"} (Click to flip)`}
+                onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : "asc")}
               >
-                <Square size={13} />
-                {stoppingId === runningTestId ? "Stopping…" : "Stop Execution"}
+                {sortOrder === "asc" ? <><ArrowUp size={11} /> ASC</> : <><ArrowDown size={11} /> DESC</>}
               </button>
             </div>
-          </div>
-        )}
 
-        {/* ── "Run & Monitor Hub" card  (matches screenshot) ── */}
-        <div className="rt-hub-card">
-          <div className="rt-hub-left">
-            <div className="rt-hub-icon">
-              <Activity size={20} />
-            </div>
-            <div>
-              <div className="rt-hub-title">Run & Monitor Hub</div>
-              <div className="rt-hub-sub">
-                Execute load scenarios, monitor live execution, and view k6 output logs
-              </div>
-            </div>
-          </div>
-          <div className="rt-hub-right">
-            <div className="search-box">
-              <Search size={14} className="search-ico" />
-              <input
-                placeholder="Search scenarios…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <div className="sort-badge-wrap" title="Sort test scenarios">
-              <ArrowUpDown size={13} className="sort-badge-icon" />
-              <select
-                className="sort-select-modern"
-                value={`${sortBy}-${sortOrder}`}
-                onChange={(e) => {
-                  const [f, o] = e.target.value.split("-");
-                  setSortBy(f);
-                  setSortOrder(o);
-                }}
-              >
-                <option value="created_at-desc">Newest First</option>
-                <option value="created_at-asc">Oldest First</option>
-                <option value="test_name-asc">Name (A → Z)</option>
-                <option value="test_name-desc">Name (Z → A)</option>
-                <option value="users-desc">VUs (High → Low)</option>
-                <option value="users-asc">VUs (Low → High)</option>
-                <option value="duration-desc">Duration (Longest)</option>
-                <option value="duration-asc">Duration (Shortest)</option>
-                <option value="status-asc">Status</option>
-              </select>
-            </div>
             <button className="btn btn-ghost btn-sm" onClick={() => loadTests()}>
               <RefreshCw size={13} /> Refresh
             </button>
@@ -401,11 +453,11 @@ export default function RunTest() {
           </div>
         </div>
 
-        {/* ── Test scenarios table  (matches screenshot) ── */}
+        {/* ── Test scenarios table ── */}
         <div className="rt-table-wrap">
           <div className="rt-table-top">
             <div className="rt-table-top-left">
-              <span className="rt-table-top-title">Test Scenarios</span>
+              <span className="rt-table-top-title">Test Scenarios Catalog</span>
               <span className="rt-total-chip">{filtered.length}</span>
             </div>
             <div className="rt-page-info">
@@ -423,32 +475,32 @@ export default function RunTest() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th className="sortable" onClick={() => handleSort("id")} title="Click to sort by ID">
+                    <th className="sortable" onClick={() => handleSort("id")}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         ID {sortBy === "id" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
                       </div>
                     </th>
-                    <th className="sortable" onClick={() => handleSort("test_name")} title="Click to sort by Name">
+                    <th className="sortable" onClick={() => handleSort("test_name")}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         Scenario Name {sortBy === "test_name" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
                       </div>
                     </th>
-                    <th className="sortable" onClick={() => handleSort("users")} title="Click to sort by VUs">
+                    <th className="sortable" onClick={() => handleSort("users")}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         Workload {sortBy === "users" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
                       </div>
                     </th>
-                    <th className="sortable" onClick={() => handleSort("duration")} title="Click to sort by Duration">
+                    <th className="sortable" onClick={() => handleSort("duration")}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         Duration {sortBy === "duration" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
                       </div>
                     </th>
-                    <th className="sortable" onClick={() => handleSort("status")} title="Click to sort by Status">
+                    <th className="sortable" onClick={() => handleSort("status")}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         Status {sortBy === "status" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
                       </div>
                     </th>
-                    <th className="sortable" onClick={() => handleSort("created_at")} title="Click to sort by Created Date">
+                    <th className="sortable" onClick={() => handleSort("created_at")}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         Created {sortBy === "created_at" ? (sortOrder === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
                       </div>
@@ -554,7 +606,7 @@ export default function RunTest() {
                           <h3>No test scenarios found</h3>
                           <p>
                             {search
-                              ? "No results match your search."
+                              ? "No results match your search filter."
                               : "Create a test scenario to get started."}
                           </p>
                         </div>
@@ -576,102 +628,339 @@ export default function RunTest() {
           )}
         </div>
 
-        {/* ── Enterprise Live Telemetry (Native k6 Dashboard + Grafana) ── */}
-        {(runningTestId || activeRunId || grafanaUrl) && (
-          <div className="rt-grafana-card">
-            <div className="rt-grafana-hdr">
-              <div className="rt-grafana-hdr-left">
-                <div
-                  className="pulse-anim"
-                  style={{ color: "#22c55e", display: "flex", alignItems: "center" }}
-                >
-                  <Activity size={18} />
-                </div>
-                <div>
-                  <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    Live Performance Telemetry
-                    <span style={{ fontSize: 11, background: "#22c55e20", color: "#22c55e", padding: "2px 8px", borderRadius: 12, fontWeight: 600 }}>LIVE</span>
-                  </h3>
-                  <p>Real-time RPS, latency percentiles, and virtual users · Run #{activeRunId || "Active"}</p>
-                </div>
-              </div>
-              <div className="rt-grafana-hdr-right">
-                <div style={{ display: "flex", gap: 4, background: "var(--bg3)", padding: 3, borderRadius: 6, border: "1px solid var(--border)" }}>
-                  <button
-                    className={`btn btn-sm ${activeTab === "k6" ? "btn-primary" : "btn-ghost"}`}
-                    onClick={() => setActiveTab("k6")}
-                  >
-                    <Gauge size={12} /> k6 Dashboard (Native)
-                  </button>
-                  <button
-                    className={`btn btn-sm ${activeTab === "grafana" ? "btn-primary" : "btn-ghost"}`}
-                    onClick={() => setActiveTab("grafana")}
-                  >
-                    <BarChart3 size={12} /> Grafana View
-                  </button>
-                </div>
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => window.open(activeTab === "k6" ? "http://localhost:5665" : grafanaUrl.replace("&kiosk=tv", ""), "_blank")}
-                >
-                  <ExternalLink size={13} /> Open Tab
-                </button>
-                {activeRunId && (
-                  <button
-                    className="btn btn-outline btn-sm"
-                    onClick={() => navigate(`/report/${activeRunId}`)}
-                  >
-                    <FileText size={13} /> View Report
-                  </button>
+        {/* ═══════════════════════════════════════════════════════════
+            NATIVE LIVE METRICS TELEMETRY STUDIO (Zero InfluxDB / Grafana error)
+            ═══════════════════════════════════════════════════════════ */}
+        <div id="live-telemetry-studio" className="rt-telemetry-studio">
+          <div className="rt-telemetry-hdr">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{
+                color: runningTestId ? "#10b981" : "#818cf8",
+                display: "flex", alignItems: "center",
+              }}>
+                {runningTestId ? (
+                  <Activity size={20} className="pulse-anim" />
+                ) : (
+                  <Gauge size={20} />
                 )}
               </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                  Live Telemetry & Metrics Console
+                  {runningTestId ? (
+                    <span style={{
+                      fontSize: 11, background: "rgba(16,185,129,0.15)", color: "#34d399",
+                      padding: "3px 9px", borderRadius: 12, fontWeight: 700, letterSpacing: "0.04em",
+                    }}>
+                      ● LIVE STREAMING
+                    </span>
+                  ) : lastDashboardRunId ? (
+                    <span style={{
+                      fontSize: 11, background: "rgba(99,102,241,0.15)", color: "#a5b4fc",
+                      padding: "3px 9px", borderRadius: 12, fontWeight: 600,
+                    }}>
+                      RUN #{lastDashboardRunId} RESULTS
+                    </span>
+                  ) : (
+                    <span style={{
+                      fontSize: 11, background: "rgba(148,163,184,0.12)", color: "#94a3b8",
+                      padding: "3px 9px", borderRadius: 12, fontWeight: 600,
+                    }}>
+                      STANDBY
+                    </span>
+                  )}
+                </h3>
+                <p style={{ margin: "2px 0 0 0", fontSize: 12, color: "var(--tx2)" }}>
+                  {runningTestId
+                    ? `Active Load Run #${activeRunId || "—"} · Live metrics updating every second`
+                    : lastDashboardRunId
+                      ? `Execution summary for Run #${lastDashboardRunId} · Standalone metrics cached`
+                      : "Native k6 Telemetry Engine ready · Direct execution metrics without external dependencies"}
+                </p>
+              </div>
             </div>
-            <div className="rt-grafana-body">
-              {activeTab === "k6" ? (
-                <div>
-                  <iframe
-                    src="http://localhost:5665"
-                    width="100%"
-                    height="480px"
-                    style={{ border: "none", borderRadius: 8, background: "#0e1117" }}
-                    title="k6 Native Live Dashboard"
-                  />
-                  <div className="rt-grafana-note" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <CheckCircle2 size={14} style={{ color: "#22c55e" }} />
-                      Streaming directly from k6 native engine on port 5665. <strong>No InfluxDB required.</strong>
-                    </span>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ fontSize: 11 }}
-                      onClick={() => window.open("http://localhost:5665", "_blank")}
-                    >
-                      Pop out dashboard ↗
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <iframe
-                    src={grafanaUrl || "http://localhost:3000"}
-                    width="100%"
-                    height="460px"
-                    style={{ border: "none", borderRadius: 8 }}
-                    title="Grafana Dashboard"
-                  />
-                  <div className="rt-grafana-note">
-                    <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-                    <span>
-                      Grafana view streams from port 3000. For zero-config instant streaming without InfluxDB, switch to the <strong>k6 Dashboard (Native)</strong> tab above.
-                    </span>
-                  </div>
-                </div>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {runningTestId && (
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => stopTest(runningTestId)}
+                >
+                  <Square size={13} /> Stop Execution
+                </button>
+              )}
+
+              {(lastDashboardRunId || activeRunId) && (
+                <>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    onClick={() => window.open(`http://localhost:8000/dashboard-report/${lastDashboardRunId || activeRunId}`, "_blank")}
+                    title="Open standalone HTML performance report"
+                  >
+                    <ExternalLink size={13} /> HTML Report
+                  </button>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    onClick={() => navigate(`/report/${lastDashboardRunId || activeRunId}`)}
+                    title="View detailed summary and charts"
+                  >
+                    <FileText size={13} /> View Metrics
+                  </button>
+                </>
+              )}
+
+              {telemetry.grafana_online && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setActiveTab(activeTab === "metrics" ? "grafana" : "metrics")}
+                  title="Switch between Native Metrics and Grafana"
+                >
+                  <BarChart3 size={13} /> {activeTab === "grafana" ? "Native View" : "Grafana View"}
+                </button>
               )}
             </div>
           </div>
-        )}
 
-        {/* ── Terminal output ── */}
+          <div className="rt-telemetry-body">
+            {/* If Grafana tab is manually chosen and Grafana is online */}
+            {activeTab === "grafana" && telemetry.grafana_online ? (
+              <div style={{ marginBottom: 16 }}>
+                <iframe
+                  src={`http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${activeRunId || lastDashboardRunId || ""}&refresh=5s&kiosk=tv`}
+                  width="100%"
+                  height="500px"
+                  style={{ border: "none", borderRadius: 8 }}
+                  title="Grafana Dashboard"
+                />
+              </div>
+            ) : (
+              /* NATIVE METRICS VIEW */
+              <>
+                {/* ── 8 High-Impact KPI Metric Cards ── */}
+                <div className="rt-telemetry-grid">
+                  {/* Card 1: Throughput */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Throughput</span>
+                      <div className="rt-metric-card-icon mc-emerald">
+                        <Zap size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ color: "#34d399" }}>
+                      {liveMetrics.throughput.toFixed(1)} <span style={{ fontSize: 13, fontWeight: 500 }}>/s</span>
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      {runningTestId ? (
+                        <span style={{ color: "#34d399", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", animation: "blink 1.4s infinite" }} />
+                          Live requests/sec
+                        </span>
+                      ) : (
+                        <span>Mean request rate</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Card 2: Concurrency */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Virtual Users</span>
+                      <div className="rt-metric-card-icon mc-cyan">
+                        <Users size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ color: "#38bdf8" }}>
+                      {liveMetrics.active_vus} <span style={{ fontSize: 13, fontWeight: 500 }}>VUs</span>
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>Simulated user concurrency</span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Avg Response Time */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Avg Latency</span>
+                      <div className="rt-metric-card-icon mc-indigo">
+                        <Clock size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ color: "#818cf8" }}>
+                      {liveMetrics.avg_response_time.toFixed(1)} <span style={{ fontSize: 13, fontWeight: 500 }}>ms</span>
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>Mean roundtrip response</span>
+                    </div>
+                  </div>
+
+                  {/* Card 4: P95 Tail Latency */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">P95 / P90 SLA</span>
+                      <div className="rt-metric-card-icon mc-purple">
+                        <TrendingUp size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ color: "#c084fc" }}>
+                      {liveMetrics.p95.toFixed(1)} <span style={{ fontSize: 13, fontWeight: 500 }}>ms</span>
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>P90: {liveMetrics.p90.toFixed(1)} ms</span>
+                    </div>
+                  </div>
+
+                  {/* Card 5: Total Transactions */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Total Requests</span>
+                      <div className="rt-metric-card-icon mc-amber">
+                        <BarChart3 size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val">
+                      {liveMetrics.total_requests.toLocaleString()}
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>Processed HTTP transactions</span>
+                    </div>
+                  </div>
+
+                  {/* Card 6: Error Rate */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Error Rate</span>
+                      <div className="rt-metric-card-icon mc-rose">
+                        <AlertTriangle size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ color: liveMetrics.error_rate > 0 ? "#fb7185" : "#34d399" }}>
+                      {liveMetrics.error_rate.toFixed(1)}%
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>{liveMetrics.failed_requests} failed requests</span>
+                    </div>
+                  </div>
+
+                  {/* Card 7: Passed Checks */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Checks Pass Rate</span>
+                      <div className="rt-metric-card-icon mc-emerald">
+                        <CheckCircle2 size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ color: "#34d399" }}>
+                      {liveMetrics.total_requests > 0
+                        ? `${Math.max(0, 100 - liveMetrics.error_rate).toFixed(1)}%`
+                        : "100%"}
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>✓ {liveMetrics.passed_checks} passed assertions</span>
+                    </div>
+                  </div>
+
+                  {/* Card 8: Engine Health */}
+                  <div className="rt-metric-card">
+                    <div className="rt-metric-card-top">
+                      <span className="rt-metric-card-label">Execution Status</span>
+                      <div className="rt-metric-card-icon mc-cyan">
+                        <ShieldCheck size={16} />
+                      </div>
+                    </div>
+                    <div className="rt-metric-card-val" style={{ fontSize: 18, textTransform: "uppercase" }}>
+                      <span className={statusBadge(liveMetrics.status)}>
+                        {liveMetrics.status}
+                      </span>
+                    </div>
+                    <div className="rt-metric-card-sub">
+                      <span>k6 telemetry engine</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Real-Time Dynamic Telemetry Trend Graph ── */}
+                <div className="rt-chart-box">
+                  <div className="rt-chart-box-hdr">
+                    <h4>
+                      <TrendingUp size={16} color="var(--brand-l)" />
+                      Real-Time Throughput & Latency Dynamics
+                    </h4>
+                    <div className="rt-chart-legend-box">
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#34d399" }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
+                        RPS (req/s)
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#818cf8" }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", boxShadow: "0 0 6px #6366f1" }} />
+                        Latency (ms)
+                      </div>
+                      <span style={{
+                        fontSize: 10, background: "rgba(255,255,255,0.06)", padding: "2px 8px",
+                        borderRadius: 10, color: "var(--tx3)"
+                      }}>
+                        Live Resolution: 1.2s
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ width: "100%", height: 240 }}>
+                    {telemetryHistory.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={telemetryHistory} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="rpsGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.35}/>
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                            </linearGradient>
+                            <linearGradient id="latGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35}/>
+                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                          <XAxis dataKey="time" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis yAxisId="left" tick={{ fill: "#34d399", fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis yAxisId="right" orientation="right" tick={{ fill: "#818cf8", fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <Tooltip content={<CustomChartTooltip />} />
+                          <Area
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="rps"
+                            name="Throughput"
+                            stroke="#10b981"
+                            strokeWidth={2}
+                            fillOpacity={1}
+                            fill="url(#rpsGrad)"
+                          />
+                          <Area
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="latency"
+                            name="Avg Latency"
+                            stroke="#6366f1"
+                            strokeWidth={2}
+                            fillOpacity={1}
+                            fill="url(#latGrad)"
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{
+                        height: "100%", display: "flex", flexDirection: "column",
+                        alignItems: "center", justifyContent: "center", color: "var(--tx3)", fontSize: 13, gap: 8,
+                      }}>
+                        <Activity size={28} style={{ opacity: 0.3 }} />
+                        <span>Ready to capture live telemetry. Click <strong>Run Now</strong> on any scenario to plot real-time metrics.</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── Terminal Output Console ── */}
         {output && (
           <div className="rt-terminal-card">
             <div className="rt-terminal-hdr">

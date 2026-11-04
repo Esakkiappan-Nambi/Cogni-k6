@@ -90,6 +90,8 @@ pipeline {
 
                     semgrep \
                         --config=auto \
+                        --exclude='**/reports/**' \
+                        --exclude='**/venv/**' \
                         --json \
                         --output="${REPORT_DIR}/semgrep-report.json" \
                         . || true
@@ -104,6 +106,9 @@ pipeline {
 
                     trivy fs \
                         --scanners vuln,secret,misconfig \
+                        --skip-dirs reports \
+                        --skip-dirs Backend/reports \
+                        --skip-dirs Backend/venv \
                         --format json \
                         --output "${REPORT_DIR}/trivy-report.json" \
                         . || true

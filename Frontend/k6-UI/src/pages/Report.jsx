@@ -136,9 +136,9 @@ export default function Report() {
             <tbody>
               {metrics.map(([label, value, unit]) => (
                 <tr key={label}>
-                  <td style={{ color:"var(--text-secondary)" }}>{label}</td>
-                  <td style={{ textAlign:"right", fontWeight:600, color:"var(--text-primary)" }}>
-                    {value} {unit && <span style={{ color:"var(--text-muted)", fontWeight:400, fontSize:11 }}>{unit}</span>}
+                  <td style={{ color:"var(--tx2)" }}>{label}</td>
+                  <td style={{ textAlign:"right", fontWeight:600, color:"var(--tx)" }}>
+                    {value} {unit && <span style={{ color:"var(--tx3)", fontWeight:400, fontSize:11 }}>{unit}</span>}
                   </td>
                 </tr>
               ))}

@@ -1,0 +1,13 @@
+.env
+.git
+.pytest_cache
+__pycache__
+*.py[cod]
+venv
+.venv
+reports
+generated_scripts
+uploads
+uploaded_csv
+recorder_sessions
+semgrep-report.json

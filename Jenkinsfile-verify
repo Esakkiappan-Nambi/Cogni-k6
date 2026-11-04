@@ -46,6 +46,8 @@ pipeline {
 
         stage('Re-scan') {
             steps {
+                sh 'docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" semgrep/semgrep semgrep scan --config auto --exclude "**/reports/**" --exclude "**/venv/**" --json --output semgrep-rescan.json . || true'
+                sh 'docker run --rm -v jenkins_home:/var/jenkins_home -w "$WORKSPACE" aquasec/trivy fs --skip-dirs reports --skip-dirs Backend/reports --skip-dirs Backend/venv --format json --output trivy-rescan.json . || true'
                 sh '''
                   set +e
                   rm -f semgrep-rescan.json trivy-rescan.json

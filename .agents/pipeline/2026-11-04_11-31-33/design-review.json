@@ -1,0 +1,85 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "HIGH",
+      "title": "`asyncio` is NOT imported in `main.py`",
+      "location": "Design §4 (SSE Endpoint); Backend/main.py imports",
+      "description": "The SSE generator uses `asyncio.sleep(1)` but `import asyncio` is absent from `main.py`. The design body does not list it as a required addition even though the Files Modified table acknowledges it. Runtime will raise `NameError: name 'asyncio' is not defined` on the first SSE connection. `py_compile` will pass (not a syntax error).",
+      "fix": "Add `import asyncio` to the stdlib imports section at the top of `Backend/main.py`."
+    },
+    {
+      "id": 2,
+      "severity": "HIGH",
+      "title": "`Dashboard.jsx` does not import `useCallback` — design's fix will fail",
+      "location": "Design §9 (Dashboard.jsx Fix); Frontend/k6-UI/src/pages/Dashboard.jsx line 1",
+      "description": "The current React import in `Dashboard.jsx` is `import React, { useEffect, useState } from 'react'`. `useCallback` is not imported. Applying the design's `useCallback` wrapping verbatim will cause `ReferenceError: useCallback is not defined` at runtime.",
+      "fix": "The Files Modified entry and §9 must explicitly state: update the React import to `import React, { useEffect, useState, useCallback } from 'react'`."
+    },
+    {
+      "id": 3,
+      "severity": "HIGH",
+      "title": "Design §6 misstates that `run_scheduled_test` 'calls' `run_k6_in_background` directly",
+      "location": "Design §6 (run_scheduled_test Update); Backend/main.py run_scheduled_test function",
+      "description": "`run_scheduled_test` spawns a `threading.Thread(target=run_k6_in_background, ...)`. The design states 'It calls `run_k6_in_background`'. While the outcome is the same, the misstatement could cause an implementer to think `run_scheduled_test` needs a signature change when it does not. The conclusion (no change needed) is correct but arrives via a factually wrong description.",
+      "fix": "Revise §6: '`run_scheduled_test` spawns a daemon thread targeting `run_k6_in_background` via `threading.Thread`. Since only `run_k6_in_background` is updated (not its call signature), `run_scheduled_test` requires no change.'"
+    },
+    {
+      "id": 4,
+      "severity": "MEDIUM",
+      "title": "Design misleadingly describes stderr handling after the `communicate()` → line-loop change",
+      "location": "Design §3 (execute_k6 Changes)",
+      "description": "Current code: `stdout=subprocess.PIPE, stderr=subprocess.PIPE` + `process.communicate()` + `output = stdout + stderr`. Design changes to `stderr=subprocess.STDOUT` and a line loop. The design states `stderr = \"\"` which is technically accurate but misleads future maintainers into thinking stderr is lost. In reality all stderr content is captured on stdout because of `STDOUT` redirection. The comment in the snippet needs to be clarified.",
+      "fix": "In the code comment, replace 'stderr was merged into stdout via stderr=subprocess.STDOUT, so stderr = \"\"' with: 'All stderr is redirected into the stdout pipe. The explicit stderr=\"\" below exists only for compatibility with the 3-tuple return; all k6 output (including errors) arrives via the line loop.'"
+    },
+    {
+      "id": 6,
+      "severity": "MEDIUM",
+      "title": "State B will show zeroes (not final chart) after a server restart — design says 'immediate done event'",
+      "location": "Design §8 (Integration into RunTest.jsx); live_metrics in-process dict",
+      "description": "The design claims State B LiveMetricsDashboard 'will connect to SSE, receive an immediate done: true event'. This is only true within the same server process lifetime. After a restart, `live_metrics[run_id]` is gone, the SSE generator waits 60 s then sends `{error: 'run_not_found'}`, and the polling fallback returns zeroes — not the historical metrics. This is a user-visible regression from the current State B (HTML export iframe).",
+      "fix": "In §8, add: 'If `data.error === \"run_not_found\"` is received in State B context (test not currently running), render a message directing the user to the full report at `/report/{runId}` rather than displaying zero-value KPI cards.' Update the Error Handling table with this case."
+    },
+    {
+      "id": 7,
+      "severity": "MEDIUM",
+      "title": "`JSON.parse` in SSE `onmessage` is uncaught — validation table claim contradicts the code snippet",
+      "location": "Design §7 (LiveMetricsDashboard), Validation Rules table",
+      "description": "The validation table says 'JSON.parse error caught; no action' but the `onmessage` code snippet shows `const data = JSON.parse(e.data)` with no try/catch. An uncaught SyntaxError propagates to `onerror`, closing the SSE and forcing permanent polling fallback.",
+      "fix": "Wrap the parse in try/catch:\n```jsx\nes.onmessage = (e) => {\n  let data;\n  try { data = JSON.parse(e.data); } catch { return; }\n  if (data.error) { es.close(); startPolling(); return; }\n  ...\n};\n```"
+    },
+    {
+      "id": 8,
+      "severity": "MEDIUM",
+      "title": "`startPolling` and `stopPolling` are called but never defined in the component spec",
+      "location": "Design §7 (LiveMetricsDashboard), SSE connection lifecycle code block",
+      "description": "The useEffect code calls `startPolling()` and `stopPolling()` but no function signatures or implementations are provided. The prose describes their behaviour but does not show the code. An implementer reading only the code snippets will produce a reference error.",
+      "fix": "Add explicit implementations of `startPolling` / `stopPolling` using a `pollingRef = useRef(null)` pattern. See review finding 8 for a concrete snippet."
+    },
+    {
+      "id": 9,
+      "severity": "NIT",
+      "title": "Design body does not note that `import json` is already present, creating asymmetry with `asyncio` annotation",
+      "location": "Design §1, §4; Backend/main.py",
+      "description": "`json` is already imported in `main.py`. The design only calls out `asyncio` as needing to be added. No harm but the asymmetric treatment caused Finding 1 to be missed in the design's own review.",
+      "fix": "In §4 and the Files Modified table, add: 'Add `import asyncio` (stdlib; `import json`, `import re`, `import time` are already present).'"
+    },
+    {
+      "id": 10,
+      "severity": "NIT",
+      "title": "Claim that inline styles are 'consistent with RunTest.jsx which uses heavy inline styles for the telemetry panel' is overstated",
+      "location": "Design §7 (KPI cards)",
+      "description": "`RunTest.jsx` mixes CSS class names (`rt-grafana-card`, `rt-grafana-body`, etc.) with inline styles. The telemetry panel is not exclusively inline-styled.",
+      "fix": "Change to: 'Inline styles are used for KPI cards, consistent with the service status cards and how-to guide in the idle State C panel.'"
+    },
+    {
+      "id": 11,
+      "severity": "NIT",
+      "title": "`ts` unit contract not explicitly stated in FR-1.2",
+      "location": "Requirements FR-1.2; Design §1",
+      "description": "FR-1.2 says 'Updates `ts` to the current epoch millisecond' but does not show the Python expression. The `appendPoint` helper uses `new Date(data.ts)` which requires milliseconds. An implementer might use `time.time()` (seconds) instead of `int(time.time() * 1000)`.",
+      "fix": "In FR-1.2, specify: '`ts` must be set to `int(time.time() * 1000)` (Unix epoch milliseconds, compatible with `new Date(ts)` in JavaScript).'"
+    }
+  ]
+}

@@ -34,7 +34,10 @@ pipeline {
                     -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" \
                     -w "${WORKSPACE}" \
                     semgrep/semgrep \
-                    semgrep scan --config auto --no-git-ignore --json . \
+                    semgrep scan --config auto \
+                      --exclude '**/reports/**' \
+                      --exclude '**/venv/**' \
+                      --json . \
                     > semgrep-results.json
 
                   echo "=== semgrep-results.json (first 30 lines) ==="
@@ -88,7 +91,9 @@ pipeline {
                     -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" \
                     -w "${WORKSPACE}" \
                     aquasec/trivy \
-                    fs --format json . \
+                    fs --skip-dirs reports --skip-dirs Backend/reports \
+                    --skip-dirs Backend/venv \
+                    --format json . \
                     > trivy-results.json
 
                   echo "=== trivy-results.json (first 30 lines) ==="

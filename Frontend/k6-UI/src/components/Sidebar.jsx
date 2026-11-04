@@ -123,26 +123,28 @@ export default function Sidebar() {
         </div>
       </nav>
 
-      {/* ── Theme Mode Toggle ── */}
-      <div className="sb-theme-toggle-row">
-        <button
-          className="sb-theme-btn"
-          type="button"
-          onClick={toggleTheme}
-          title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
-        >
-          {theme === "dark" ? (
-            <>
-              <Sun size={15} style={{ color: "#fbbf24" }} />
-              <span>Light Mode</span>
-            </>
-          ) : (
-            <>
-              <Moon size={15} style={{ color: "#818cf8" }} />
-              <span>Dark Mode</span>
-            </>
-          )}
-        </button>
+      {/* ── Executive Dual-Pill Theme Switcher ── */}
+      <div className="sb-theme-container">
+        <div className="sb-theme-segmented">
+          <button
+            type="button"
+            className={`sb-theme-pill ${theme === "dark" ? "active" : ""}`}
+            onClick={() => setTheme("dark")}
+            title="Switch to Dark Mode"
+          >
+            <Moon size={13} className="sb-theme-icon" />
+            <span>Dark</span>
+          </button>
+          <button
+            type="button"
+            className={`sb-theme-pill ${theme === "light" ? "active" : ""}`}
+            onClick={() => setTheme("light")}
+            title="Switch to Light Mode"
+          >
+            <Sun size={13} className="sb-theme-icon" />
+            <span>Light</span>
+          </button>
+        </div>
       </div>
 
       {/* ── User footer ── */}

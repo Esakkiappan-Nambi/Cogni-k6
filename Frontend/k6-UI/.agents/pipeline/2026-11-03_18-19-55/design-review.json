@@ -1,0 +1,77 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "HIGH",
+      "title": "load declared after useEffect — stale closure risk, hoisting hazard not documented",
+      "location": "Design §Fix 3a / src/pages/Dashboard.jsx",
+      "description": "const load is defined on line 39, after the useEffect on line 37. The design proposes adding setInterval(() => load(true), ...) inside that same useEffect with an empty deps array. This creates a stale closure: the interval holds the initial render's load reference. The design does not document why this is safe (it's safe only because load exclusively calls stable state setters) nor does it instruct moving load before useEffect or wrapping it in useCallback. Without explicit guidance, the implementer may introduce bugs by adding non-setter values to load in the future.",
+      "fix": "Declare load with useCallback([]) above the useEffect, then list load in the useEffect dependency array. This eliminates the stale closure and the eslint-disable comment."
+    },
+    {
+      "id": 2,
+      "severity": "HIGH",
+      "title": "CSS audit table misses pre-existing duplicates between Report.css and index.css",
+      "location": "Design §Fix 2 audit table",
+      "description": "The design claims .rpt-body, .verdict-card, .verdict-pass, .verdict-fail, .verdict-left, .rpt-kpis, .rpt-kpi-card, .rpt-kpi-label, .rpt-kpi-value, .rpt-kpi-unit, .rpt-kpi-card.warn .rpt-kpi-value, and .rpt-back exist only in Report.css. In reality all of these are ALSO defined in index.css (lines ~750-780). The index.css and Report.css definitions have minor differences (e.g., child selector > svg vs descendant selector svg on verdict-left). The design does not declare which copy is authoritative, creating an NFR-2.1 compliance risk and potential visual inconsistency.",
+      "fix": "Add an audit column 'Also in index.css?' to the table, mark all duplicates, and declare the later (cascade-winning) definition as authoritative — or explicitly instruct removal of the index.css duplicates as a pre-step."
+    },
+    {
+      "id": 3,
+      "severity": "HIGH",
+      "title": "Always-visible idle card renders simultaneously with lastDashboardRunId card — UX regression",
+      "location": "Design §Fix 4 / src/pages/RunTest.jsx",
+      "description": "After a test completes, runningTestId is null and lastDashboardRunId is set. With the proposed always-render approach, the first card shows the idle status grid (three service cards + 'Run a test above…') while the second card (gated by !runningTestId && lastDashboardRunId) shows the completed run dashboard. The user sees two consecutive telemetry cards — a confusing dual-panel layout. The design acknowledges only the case where neither runningTestId nor lastDashboardRunId is set, not the post-run state.",
+      "fix": "Use a three-way ternary inside the card body: runningTestId ? liveIframes : lastDashboardRunId ? postRunContent : idleFallback. Alternatively, suppress the idle fallback when lastDashboardRunId is set."
+    },
+    {
+      "id": 4,
+      "severity": "MEDIUM",
+      "title": "Audit table location column is internally inconsistent for Report.css entries",
+      "location": "Design §Fix 2 audit table",
+      "description": "The same row that correctly lists .rpt-topbar (only in Report.css) also lists .rpt-back and .rpt-body (which exist in both files). The table gives the implementer a false sense of completeness.",
+      "fix": "Separate the Report.css-only entries from the dual-defined entries. See Finding 2 for full list of duplicates."
+    },
+    {
+      "id": 5,
+      "severity": "MEDIUM",
+      "title": "Error handling matrix claims 'Telemetry defaults to offline state' when /telemetry-status fails — incorrect",
+      "location": "Design §Fix 3a error handling matrix / Dashboard.jsx load()",
+      "description": "The .catch(() => ({ data: {} })) makes t.data an empty object {}. Since {} is truthy, if (t.data) setTelemetry(t.data) calls setTelemetry({}) — wiping grafana_online, influxdb_online, grafana_base_url, and grafana_dashboard_path to undefined. The RunTest idle-panel then shows 'undefined' for service URLs instead of the safe defaults.",
+      "fix": "Change guard to: if (t.data && Object.keys(t.data).length > 0) setTelemetry(prev => ({ ...prev, ...t.data }));"
+    },
+    {
+      "id": 6,
+      "severity": "MEDIUM",
+      "title": "Design omits discussion of pre-existing CSS duplicates and their cascade implications",
+      "location": "Design §Fix 2 overview paragraph",
+      "description": "The overview paragraph claims only rpt-output-* classes are absent. It does not mention that index.css already duplicates the Report.css content for verdict-card, rpt-kpis, rpt-kpi-card, rpt-body, and rpt-back. This is a subsumed but distinct point from Finding 2 — the cascade-order interaction between Report.css (imported via import './Report.css') and the global index.css is not analyzed.",
+      "fix": "Add a 'CSS cascade analysis' paragraph noting which file is imported last in Report.jsx and which definition wins for each duplicate selector."
+    },
+    {
+      "id": 7,
+      "severity": "MEDIUM",
+      "title": "Design does not explicitly prohibit adding k6_dashboard_online to Dashboard telemetry initializer",
+      "location": "Design §Fix 3b / Assumptions A3",
+      "description": "A3 notes that Dashboard does not need k6_dashboard_online. But the k6 pill JSX hardcodes green — if a future implementer adds k6_dashboard_online to the Dashboard telemetry initializer and the /telemetry-status endpoint returns false for it, the pill would remain hardcoded green (a silent lie). The design should make this architectural decision explicit.",
+      "fix": "Add a design note: 'The k6 pill state is intentionally hardcoded — do not gate it on k6_dashboard_online. The k6 engine is co-located and always operational from the client's perspective.'"
+    },
+    {
+      "id": 8,
+      "severity": "NIT",
+      "title": "Prose says 'All three tokens' but lists five tokens for rpt-output-header",
+      "location": "Design §Fix 2 CSS snippet note",
+      "description": "The sentence reads 'All three tokens (`--bg2`, `--bg4`, `--border`, `--r3`, `--tx`) are defined in :root.' Five tokens are listed.",
+      "fix": "Change 'three' to 'five'."
+    },
+    {
+      "id": 9,
+      "severity": "NIT",
+      "title": "Idle-state tab button behaviour (activeTab persists across idle/live transition) is not documented",
+      "location": "Design §Fix 4 'Header tab buttons when idle'",
+      "description": "If a user clicks 'Grafana View' while idle, activeTab becomes 'grafana'. When a test starts, the Grafana iframe loads immediately rather than the k6 native dashboard. This is a pre-existing behaviour not caused by this change, but it should be noted.",
+      "fix": "Add: 'The activeTab state persists across idle/live transitions. This is acceptable existing behaviour — no reset logic is needed.'"
+    }
+  ]
+}

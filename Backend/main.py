@@ -9,6 +9,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from router.auto_capture import router as auto_capture_router  # ← uncommented & fixed
 from router.recorder import router as recorder_router
 from models import User, Test, TestRun, Report
@@ -563,11 +564,61 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
     try:
         print(f"[k6] Starting test_id={test_id} run_id={test_run_id}")
 
+        test_obj = db.query(Test).filter(Test.id == test_id).first()
+        live_telemetry[test_run_id] = {
+            "id": test_run_id,
+            "test_name": test_obj.test_name if test_obj else "Scenario",
+            "status": "running",
+            "output": "",
+            "throughput": 0.0,
+            "avg_response_time": 0.0,
+            "min_response_time": 0.0,
+            "max_response_time": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "error_rate": 0.0,
+            "total_requests": 0,
+            "failed_requests": 0,
+            "passed_checks": 0,
+            "active_vus": test_obj.users if test_obj else 1,
+            "started_at": datetime.utcnow().isoformat()
+        }
+
         def on_started(proc):
             running_processes[test_run_id] = proc
             running_processes[f"test_{test_id}"] = proc
 
-        output, summary_data, summary_path = execute_k6(script_path, test_run_id, on_process_created=on_started)
+        def on_chunk(line):
+            data = live_telemetry.get(test_run_id)
+            if not data:
+                return
+            data["output"] += line
+            # Parse real-time k6 output
+            m_reqs = re.search(r'http_reqs\.*:\s*(\d+)\s+([\d\.]+)/s', line)
+            if m_reqs:
+                data["total_requests"] = int(m_reqs.group(1))
+                data["throughput"] = float(m_reqs.group(2))
+            m_dur = re.search(r'http_req_duration\.*:\s*avg=([\d\.]+)(m?s).*?p\(90\)=([\d\.]+)(m?s).*?p\(95\)=([\d\.]+)(m?s)', line)
+            if m_dur:
+                data["avg_response_time"] = float(m_dur.group(1))
+                data["p90"] = float(m_dur.group(3))
+                data["p95"] = float(m_dur.group(5))
+            m_vus = re.search(r'(\d+)/(\d+)\s+VUs', line)
+            if m_vus:
+                data["active_vus"] = int(m_vus.group(1))
+            m_fail = re.search(r'http_req_failed\.*:\s*([\d\.]+)%', line)
+            if m_fail:
+                data["error_rate"] = float(m_fail.group(1))
+            m_checks = re.search(r'checks\.*:\s*([\d\.]+)%\s*✓\s*(\d+)\s*✗\s*(\d+)', line)
+            if m_checks:
+                data["passed_checks"] = int(m_checks.group(2))
+                data["failed_requests"] = int(m_checks.group(3))
+
+        output, summary_data, summary_path = execute_k6(
+            script_path, test_run_id,
+            on_process_created=on_started,
+            on_output_chunk=on_chunk
+        )
         metrics = extract_metrics(summary_data, output, summary_path)
 
         print(
@@ -654,6 +705,7 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
         except Exception as inner:
             print(f"[k6] Could not mark as failed: {inner}")
     finally:
+        live_telemetry.pop(test_run_id, None)
         running_processes.pop(test_run_id, None)
         running_processes.pop(f"test_{test_id}", None)
         db.close()
@@ -805,6 +857,23 @@ def get_report(run_id: int, db: Session = Depends(get_db)):
     }
 
     if not report:
+        if run.status == "running" and run_id in live_telemetry:
+            live = live_telemetry[run_id]
+            return {
+                **base,
+                "throughput": live.get("throughput", 0.0),
+                "avg_response_time": live.get("avg_response_time", 0.0),
+                "min_response_time": live.get("min_response_time", 0.0),
+                "max_response_time": live.get("max_response_time", 0.0),
+                "p90": live.get("p90", 0.0),
+                "p95": live.get("p95", 0.0),
+                "error_rate": live.get("error_rate", 0.0),
+                "total_requests": live.get("total_requests", 0),
+                "failed_requests": live.get("failed_requests", 0),
+                "passed_checks": live.get("passed_checks", 0),
+                "active_vus": live.get("active_vus", 1),
+                "output": live.get("output", "") or run.output or "",
+            }
         return {
             **base,
             "throughput": 0, "avg_response_time": 0, "min_response_time": 0,
@@ -863,6 +932,47 @@ def get_reports(db: Session = Depends(get_db), current_user: User = Depends(get_
 
 # ── Add this import near the top of main.py, with the other imports ──────────
 import requests as http_requests
+
+
+def _preview_authority_key(authority: str) -> str | None:
+    try:
+        parsed = urlsplit(f"//{authority}")
+        port = parsed.port
+    except ValueError:
+        return None
+
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+
+    hostname = parsed.hostname.rstrip(".").casefold()
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    return f"{hostname}:{port}" if port is not None else hostname
+
+
+def _preview_url_is_allowed(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+
+    if parsed.scheme.casefold() not in ("http", "https") or not parsed.netloc:
+        return False
+
+    target = _preview_authority_key(parsed.netloc)
+    allowed = {
+        key
+        for item in os.getenv("K6_PREVIEW_ALLOWED_HOSTS", "").split(",")
+        if (key := _preview_authority_key(item.strip()))
+    }
+    return target is not None and target in allowed
  
  
 # ── Add this endpoint anywhere among your other @app routes in main.py ───────
@@ -881,12 +991,21 @@ def preview_step(
     headers = payload.get("headers") or {}
     body    = payload.get("body")
  
-    if not url:
+    if not isinstance(url, str) or not url.strip():
         raise HTTPException(status_code=400, detail="URL is required")
+    if not _preview_url_is_allowed(url):
+        raise HTTPException(
+            status_code=403,
+            detail="Preview target is not allowed",
+        )
     if not isinstance(headers, dict):
         headers = {}
- 
-    request_kwargs = {"headers": headers, "timeout": 15}
+
+    request_kwargs = {
+        "headers": headers,
+        "timeout": 15,
+        "allow_redirects": False,
+    }
  
     if method not in ("GET", "DELETE") and body:
         try:
@@ -1126,7 +1245,7 @@ def delete_run(run_id: int, db: Session = Depends(get_db)):
     return {"message": "Run deleted successfully"}
 
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 @app.get("/download-report/{run_id}")
 def download_report(run_id: int, db: Session = Depends(get_db)):
@@ -1145,47 +1264,258 @@ def download_report(run_id: int, db: Session = Depends(get_db)):
 # ── Telemetry Health endpoint ───────────────────────────────────────────────
 
 @app.get("/dashboard-report/{run_id}")
-def get_dashboard_report(run_id: int):
+def get_dashboard_report(run_id: int, db: Session = Depends(get_db)):
     """
-    Serves the standalone Grafana Web Dashboard HTML report exported by k6.
-    Zero InfluxDB required.
+    Serves the standalone k6 Web Dashboard HTML report or builds an interactive
+    HTML report from summary.json / database. Zero 500 errors.
     """
-    html_path = os.path.abspath(f"reports/{run_id}_dashboard.html")
-    if os.path.exists(html_path):
-        return FileResponse(path=html_path, media_type="text/html")
-    return HTMLResponse(
-        content=f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8"/>
-          <title>k6 Live Dashboard - Run #{run_id}</title>
-          <style>
-            body {{
-              background: #0e1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center;
-            }}
-            .card {{
-              background: #161b27; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 32px 40px; max-width: 520px;
-            }}
-            h2 {{ color: #818cf8; margin-top: 0; font-size: 22px; }}
-            p {{ color: #94a3b8; font-size: 14px; line-height: 1.6; }}
-            .btn {{
-              display: inline-block; background: #6366f1; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-top: 16px;
-            }}
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h2>k6 Native Live Telemetry</h2>
-            <p>During active execution, live metrics (RPS, Latency, VUs) stream in real-time on port 5665.</p>
-            <a class="btn" href="http://localhost:5665" target="_blank">Open Live Dashboard (Port 5665)</a>
-          </div>
-        </body>
-        </html>
-        """,
-        status_code=200
-    )
+    try:
+        html_path = os.path.abspath(f"reports/{run_id}_dashboard.html")
+        if os.path.exists(html_path):
+            return FileResponse(
+                path=html_path,
+                media_type="text/html",
+                headers={"X-Frame-Options": "SAMEORIGIN", "Cache-Control": "no-cache"},
+            )
+
+        # Look for summary.json or DB Report
+        summary_path = os.path.abspath(f"reports/{run_id}_summary.json")
+        summary_metrics = {}
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path, "r", encoding="utf-8") as f:
+                    summary_metrics = json.load(f).get("metrics", {})
+            except Exception:
+                pass
+
+        run = db.query(TestRun).filter(TestRun.id == run_id).first()
+        test = db.query(Test).filter(Test.id == run.test_id).first() if run else None
+        test_name = test.test_name if test else f"Test #{run_id}"
+        status = run.status.upper() if run else "COMPLETED"
+        is_success = status in ("COMPLETED", "PASSED")
+
+        # Metric values
+        rps = round(summary_metrics.get("http_reqs", {}).get("rate", 0.0), 2)
+        total_reqs = summary_metrics.get("http_reqs", {}).get("count", 0)
+        dur = summary_metrics.get("http_req_duration", {})
+        avg_rt = round(dur.get("avg", 0.0), 2)
+        p90 = round(dur.get("p(90)", 0.0), 2)
+        p95 = round(dur.get("p(95)", 0.0), 2)
+        min_rt = round(dur.get("min", 0.0), 2)
+        max_rt = round(dur.get("max", 0.0), 2)
+        med_rt = round(dur.get("med", 0.0), 2)
+
+        checks = summary_metrics.get("checks", {})
+        passed_checks = checks.get("passes", 0)
+        failed_checks = checks.get("fails", 0)
+        check_rate = round(checks.get("value", 1.0) * 100, 1)
+
+        err_rate = round(summary_metrics.get("http_req_failed", {}).get("rate", 0.0) * 100, 2)
+        max_vus = summary_metrics.get("vus_max", {}).get("value", test.users if test else 1)
+
+        status_color = "#22c55e" if is_success else "#ef4444"
+        status_bg = "rgba(34, 197, 94, 0.15)" if is_success else "rgba(239, 68, 68, 0.15)"
+
+        report_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>k6 Performance Report — Run #{run_id}</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 32px 24px; line-height: 1.5;
+    }}
+    .container {{ max-width: 1040px; margin: 0 auto; }}
+    .header {{
+      display: flex; justify-content: space-between; align-items: flex-start;
+      border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 24px; margin-bottom: 28px;
+    }}
+    .title-row {{ display: flex; align-items: center; gap: 12px; }}
+    h1 {{ font-size: 24px; font-weight: 700; color: #f8fafc; letter-spacing: -0.5px; }}
+    .status-badge {{
+      display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 11px; font-weight: 700;
+      background: {status_bg}; color: {status_color}; border: 1px solid {status_color}40; letter-spacing: 0.05em;
+    }}
+    .sub {{ font-size: 13px; color: #94a3b8; margin-top: 4px; }}
+    .btn-group {{ display: flex; gap: 10px; }}
+    .btn {{
+      padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; text-decoration: none;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent;
+    }}
+    .btn-primary {{ background: #4f46e5; color: #ffffff; }}
+    .btn-outline {{ background: rgba(255,255,255,0.05); color: #94a3b8; border-color: rgba(255,255,255,0.12); }}
+    .btn-outline:hover {{ color: #ffffff; border-color: #6366f1; }}
+
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }}
+    .card {{
+      background: #111827; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px;
+      padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }}
+    .card-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; font-weight: 600; }}
+    .card-val {{ font-size: 28px; font-weight: 700; color: #f8fafc; margin: 8px 0 4px; font-family: monospace; }}
+    .card-sub {{ font-size: 12px; color: #94a3b8; }}
+
+    .section-title {{ font-size: 16px; font-weight: 700; color: #f8fafc; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }}
+    .chart-box {{
+      background: #111827; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 24px; margin-bottom: 28px;
+    }}
+    .bar-row {{ display: flex; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 12px; }}
+    .bar-label {{ width: 70px; color: #94a3b8; font-weight: 500; text-align: right; }}
+    .bar-track {{ flex: 1; height: 16px; background: rgba(255,255,255,0.04); border-radius: 4px; overflow: hidden; }}
+    .bar-fill {{ height: 100%; background: linear-gradient(90deg, #4f46e5, #6366f1); border-radius: 4px; }}
+    .bar-val {{ width: 80px; font-family: monospace; color: #f8fafc; font-weight: 600; text-align: right; }}
+
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }}
+    th {{ padding: 12px 14px; color: #64748b; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,0.08); font-weight: 600; }}
+    td {{ padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #e2e8f0; }}
+    tr:hover td {{ background: rgba(255,255,255,0.02); }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <div class="title-row">
+          <h1>{test_name}</h1>
+          <span class="status-badge">{status}</span>
+        </div>
+        <p class="sub">Execution Run #{run_id} · Audited k6 Telemetry Report</p>
+      </div>
+      <div class="btn-group">
+        <a class="btn btn-outline" href="http://localhost:8000/download-report/{run_id}" target="_blank">📄 Download PDF</a>
+        <a class="btn btn-primary" href="http://localhost:5173/history">← Back to Portal</a>
+      </div>
+    </div>
+
+    <!-- Metric KPI Grid -->
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Throughput (RPS)</div>
+        <div class="card-val" style="color:#38bdf8;">{rps} <span style="font-size:14px;color:#94a3b8;">req/s</span></div>
+        <div class="card-sub">{total_reqs} total HTTP requests sent</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Response Time</div>
+        <div class="card-val" style="color:#818cf8;">{avg_rt} <span style="font-size:14px;color:#94a3b8;">ms</span></div>
+        <div class="card-sub">Median: {med_rt}ms · Min: {min_rt}ms</div>
+      </div>
+      <div class="card">
+        <div class="card-label">P95 Latency SLA</div>
+        <div class="card-val" style="color:#a78bfa;">{p95} <span style="font-size:14px;color:#94a3b8;">ms</span></div>
+        <div class="card-sub">P90 Percentile: {p90}ms · Max: {max_rt}ms</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Error Rate</div>
+        <div class="card-val" style="color:{status_color};">{err_rate}%</div>
+        <div class="card-sub">Target SLA: &lt; 1% failure rate</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Checks & Assertions</div>
+        <div class="card-val" style="color:#34d399;">{check_rate}%</div>
+        <div class="card-sub">{passed_checks} passed · {failed_checks} failed</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Peak Virtual Users</div>
+        <div class="card-val" style="color:#fbbf24;">{max_vus} <span style="font-size:14px;color:#94a3b8;">VUs</span></div>
+        <div class="card-sub">High concurrency load profile</div>
+      </div>
+    </div>
+
+    <!-- Latency Percentiles Visualizer -->
+    <div class="section-title">📊 Latency Percentile Distribution</div>
+    <div class="chart-box">
+      <div class="bar-row">
+        <span class="bar-label">Min</span>
+        <div class="bar-track"><div class="bar-fill" style="width: {min(100, max(6, int((min_rt / (max_rt or 1)) * 100)))}%;"></div></div>
+        <span class="bar-val">{min_rt} ms</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Median</span>
+        <div class="bar-track"><div class="bar-fill" style="width: {min(100, max(8, int((med_rt / (max_rt or 1)) * 100)))}%;"></div></div>
+        <span class="bar-val">{med_rt} ms</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Average</span>
+        <div class="bar-track"><div class="bar-fill" style="width: {min(100, max(10, int((avg_rt / (max_rt or 1)) * 100)))}%;"></div></div>
+        <span class="bar-val">{avg_rt} ms</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">P90</span>
+        <div class="bar-track"><div class="bar-fill" style="width: {min(100, max(12, int((p90 / (max_rt or 1)) * 100)))}%; background: linear-gradient(90deg, #6366f1, #a855f7);"></div></div>
+        <span class="bar-val">{p90} ms</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">P95</span>
+        <div class="bar-track"><div class="bar-fill" style="width: {min(100, max(14, int((p95 / (max_rt or 1)) * 100)))}%; background: linear-gradient(90deg, #a855f7, #ec4899);"></div></div>
+        <span class="bar-val">{p95} ms</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Max</span>
+        <div class="bar-track"><div class="bar-fill" style="width: 100%; background: linear-gradient(90deg, #ec4899, #f43f5e);"></div></div>
+        <span class="bar-val">{max_rt} ms</span>
+      </div>
+    </div>
+
+    <!-- Summary Metrics Table -->
+    <div class="section-title">📋 Protocol & Execution Diagnostics</div>
+    <div class="chart-box" style="padding: 12px 16px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Metric Key</th>
+            <th>Sample Count</th>
+            <th>Throughput / Rate</th>
+            <th>Value Breakdown</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>http_reqs</strong> (HTTP Requests)</td>
+            <td>{total_reqs}</td>
+            <td>{rps} req/sec</td>
+            <td>HTTP transactions executed across scenario</td>
+          </tr>
+          <tr>
+            <td><strong>http_req_duration</strong> (Latency)</td>
+            <td>{total_reqs}</td>
+            <td>avg: {avg_rt}ms</td>
+            <td>min: {min_rt}ms · med: {med_rt}ms · max: {max_rt}ms</td>
+          </tr>
+          <tr>
+            <td><strong>checks</strong> (SLA Assertions)</td>
+            <td>{passed_checks + failed_checks}</td>
+            <td>{check_rate}% success</td>
+            <td>✓ {passed_checks} passed · ✗ {failed_checks} failed</td>
+          </tr>
+          <tr>
+            <td><strong>vus</strong> (Concurrency)</td>
+            <td>{max_vus} max</td>
+            <td>—</td>
+            <td>Concurrent virtual users executed in cluster</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>"""
+        return HTMLResponse(content=report_html, status_code=200)
+
+    except Exception as e:
+        # Fallback safe error page (Zero 500 crashes)
+        err_html = f"""<!DOCTYPE html>
+<html>
+<head><title>Run #{run_id} Report</title></head>
+<body style="background:#090d16;color:#f8fafc;font-family:sans-serif;padding:40px;text-align:center;">
+  <h2>Run #{run_id} Diagnostic Report</h2>
+  <p style="color:#94a3b8;">Detailed summary is being processed or test run is in progress.</p>
+  <a href="http://localhost:5173/history" style="color:#818cf8;text-decoration:none;font-weight:600;">← Return to Execution History</a>
+</body>
+</html>"""
+        return HTMLResponse(content=err_html, status_code=200)
 
 
 @app.get("/telemetry-status")

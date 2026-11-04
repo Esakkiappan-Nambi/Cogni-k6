@@ -210,25 +210,38 @@ export default function History() {
                 style={{ width: 240 }}
               />
             </div>
-            <div className="sort-badge-wrap" title="Sort execution history">
-              <ArrowUpDown size={13} className="sort-badge-icon" />
-              <select
-                className="sort-select-modern"
-                value={`${sortBy}-${sortOrder}`}
-                onChange={(e) => {
-                  const [f, o] = e.target.value.split("-");
-                  setSortBy(f);
-                  setSortOrder(o);
-                }}
+            <div className="sort-toolbar-group" title="Sort execution history">
+              <span className="sort-toolbar-label">
+                <ArrowUpDown size={12} /> Sort:
+              </span>
+              <div className="sort-select-box">
+                <select
+                  className="sort-select-input"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                >
+                  <option value="started_at">Execution Time</option>
+                  <option value="id">Run ID</option>
+                  <option value="test_name">Scenario Name</option>
+                  <option value="status">Status</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                className="sort-dir-btn"
+                title={`Order: ${sortOrder === "asc" ? "Ascending" : "Descending"} (Click to flip)`}
+                onClick={() => setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
               >
-                <option value="started_at-desc">Newest First</option>
-                <option value="started_at-asc">Oldest First</option>
-                <option value="id-desc">Run ID (High → Low)</option>
-                <option value="id-asc">Run ID (Low → High)</option>
-                <option value="test_name-asc">Name (A → Z)</option>
-                <option value="test_name-desc">Name (Z → A)</option>
-                <option value="status-asc">Status</option>
-              </select>
+                {sortOrder === "asc" ? (
+                  <>
+                    <ArrowUp size={11} /> ASC
+                  </>
+                ) : (
+                  <>
+                    <ArrowDown size={11} /> DESC
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
@@ -311,20 +324,19 @@ export default function History() {
                           >
                             <Gauge size={12} /> Dashboard
                           </button>
-                          {telemetry.grafana_online && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() =>
-                                window.open(
-                                  `http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${r.id}&from=now-1h&to=now`,
-                                  "_blank"
-                                )
-                              }
-                              title="Open in Grafana"
-                            >
-                              <ExternalLink size={12} /> Grafana
-                            </button>
-                          )}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={!telemetry.grafana_online ? { opacity: 0.45 } : {}}
+                            onClick={() =>
+                              window.open(
+                                `http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${r.id}&from=now-1h&to=now`,
+                                "_blank"
+                              )
+                            }
+                            title={telemetry.grafana_online ? "Open in Grafana" : "Grafana may be offline"}
+                          >
+                            <ExternalLink size={12} /> Grafana
+                          </button>
                         </div>
                       </td>
                       <td style={{ textAlign: "center" }}>

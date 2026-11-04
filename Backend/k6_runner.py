@@ -114,7 +114,7 @@ const csvData = new SharedArray("csvData", function () {{
                 if not c_name:
                     continue
                 if c_domain:
-                    if c_domain.startswith("http://") or c_domain.startswith("https://"):
+                    if urlparse(c_domain).scheme.lower() in ("http", "https"):
                         c_url = f"{c_domain.rstrip('/')}{c_path}"
                     else:
                         c_url = f"https://{c_domain.rstrip('/')}{c_path}"
@@ -748,25 +748,26 @@ export default function () {{
 import subprocess
 import json
 import os
+import http.client
 
 
 REPORT_FOLDER = "reports"
 os.makedirs(REPORT_FOLDER, exist_ok=True)
 
 
-import urllib.request
-
-
-def is_influxdb_available(url="http://localhost:8086/ping", timeout=0.8):
+def is_influxdb_available(timeout=0.8):
+    connection = http.client.HTTPConnection("127.0.0.1", 8086, timeout=timeout)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "k6-portal"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status in (200, 204)
-    except Exception:
+        connection.request("GET", "/ping", headers={"User-Agent": "k6-portal"})
+        response = connection.getresponse()
+        return response.status in (200, 204)
+    except (OSError, http.client.HTTPException):
         return False
+    finally:
+        connection.close()
 
 
-def execute_k6(script_path, run_id, on_process_created=None):
+def execute_k6(script_path, run_id, on_process_created=None, on_output_chunk=None):
     absolute_script_path = os.path.abspath(script_path)
 
     if not os.path.exists(absolute_script_path):
@@ -780,6 +781,16 @@ def execute_k6(script_path, run_id, on_process_created=None):
 
     env = os.environ.copy()
 
+    # ── Native Web Dashboard: k6 v2.x uses env vars not --out ─────────────────
+    # K6_WEB_DASHBOARD=true  → starts the live dashboard on port 5665
+    # K6_WEB_DASHBOARD_PORT  → port (default 5665)
+    # K6_WEB_DASHBOARD_EXPORT → path to write the standalone HTML report
+    dashboard_html_path = os.path.abspath(f"{REPORT_FOLDER}/{run_id}_dashboard.html")
+    env["K6_WEB_DASHBOARD"] = "true"
+    env["K6_WEB_DASHBOARD_PORT"] = "5665"
+    env["K6_WEB_DASHBOARD_EXPORT"] = dashboard_html_path
+    env["K6_WEB_DASHBOARD_OPEN"] = "false"   # don't auto-open browser
+
     k6_cmd = [
         "k6",
         "run",
@@ -787,19 +798,12 @@ def execute_k6(script_path, run_id, on_process_created=None):
         f"run_id={run_id}",
     ]
 
-    # Native Grafana Live Web Dashboard: streams real-time latency, RPS, VUs without InfluxDB
-    dashboard_html_path = os.path.abspath(f"{REPORT_FOLDER}/{run_id}_dashboard.html")
-    k6_cmd.extend([
-        "--out",
-        f"web-dashboard=port=5665&export={dashboard_html_path}"
-    ])
-
     # Telemetry streaming: dynamically verify InfluxDB before attaching output
     if is_influxdb_available():
-        print(f"[k6] InfluxDB on localhost:8086 is ONLINE. Also streaming metrics to InfluxDB.")
+        print("[k6] InfluxDB on localhost:8086 is ONLINE. Also streaming metrics to InfluxDB.")
         k6_cmd.extend(["--out", "influxdb=http://localhost:8086/k6?pushInterval=5s"])
     else:
-        print(f"[k6] InfluxDB offline. Streaming live telemetry via native Grafana Web Dashboard on http://localhost:5665.")
+        print("[k6] InfluxDB offline. Streaming live telemetry natively (no InfluxDB required).")
 
     k6_cmd.extend([
         "--summary-export",
@@ -810,18 +814,30 @@ def execute_k6(script_path, run_id, on_process_created=None):
     process = subprocess.Popen(
         k6_cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="ignore",
-        env=env
+        env=env,
+        bufsize=1
     )
 
     if on_process_created:
         on_process_created(process)
 
-    stdout, stderr = process.communicate()
-    output = stdout + stderr
+    output_lines = []
+    if process.stdout:
+        for line in iter(process.stdout.readline, ""):
+            output_lines.append(line)
+            if on_output_chunk:
+                try:
+                    on_output_chunk(line)
+                except Exception:
+                    pass
+        process.stdout.close()
+
+    process.wait()
+    output = "".join(output_lines)
     summary_data = {}
 
     if os.path.exists(summary_path):
@@ -1118,4 +1134,3 @@ def generate_pdf_report(run_id, test_name, metrics, output):
 
     doc.build(elements)
     return report_path
-

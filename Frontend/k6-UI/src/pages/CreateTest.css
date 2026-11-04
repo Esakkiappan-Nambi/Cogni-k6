@@ -760,6 +760,94 @@
   margin-top: 4px;
 }
 
+/* ── Scenario Header (builder header row) ── */
+.scenario-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.scenario-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.add-step-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--brand-grad);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--r);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--t);
+  font-family: inherit;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.add-step-btn:hover {
+  background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+  transform: translateY(-1px);
+}
+
+/* ── Preview Variables Bar ── */
+.preview-vars-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--brand-dim);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.preview-vars-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand-l);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.preview-vars-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.preview-var-chip {
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--brand-l);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 9999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: 'Consolas', monospace;
+  transition: var(--t);
+}
+
+.preview-var-chip:hover {
+  background: rgba(99, 102, 241, 0.35);
+  color: #fff;
+}
+
+/* ── Think Time input (step-grid cell) ── */
+.think-box {
+  width: 100%;
+}
+
 /* ── Primary Submit Button ── */
 .submit-btn {
   background: var(--brand-grad);

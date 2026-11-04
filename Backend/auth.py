@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import bcrypt
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+import jwt
+from jwt.exceptions import InvalidTokenError
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,8 @@ ACCESS_TOKEN_EXPIRE_HOURS = int(
 
 if not SECRET_KEY:
     raise ValueError("SECRET_KEY not found in .env")
+if ALGORITHM.startswith("HS") and len(SECRET_KEY.encode("utf-8")) < 32:
+    raise ValueError("SECRET_KEY must be at least 32 bytes for HMAC JWT algorithms")
 
 
 def get_db():
@@ -96,7 +99,7 @@ def get_current_user(
                 }
             )
 
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(
             status_code=401,
             detail="Token expired or invalid",
