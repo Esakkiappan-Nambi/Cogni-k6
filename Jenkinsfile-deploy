@@ -49,18 +49,26 @@ pipeline {
         }
 
         stage('Deploy Backend') {
-            steps {
-                sh '''
-                    docker rm -f k6-backend || true
+    steps {
+        withCredentials([
+            string(
+                credentialsId: 'k6-database-url',
+                variable: 'DATABASE_URL'
+            )
+        ]) {
+            sh '''
+                docker rm -f k6-backend || true
 
-                    docker run -d \
-                      --name k6-backend \
-                      --restart unless-stopped \
-                      -p ${BACKEND_PORT}:8000 \
-                      ${BACKEND_IMAGE}:${IMAGE_TAG}
-                '''
-            }
+                docker run -d \
+                  --name k6-backend \
+                  --restart unless-stopped \
+                  -p 8000:8000 \
+                  -e DATABASE_URL="$DATABASE_URL" \
+                  k6-backend:latest
+            '''
         }
+    }
+}
 
         stage('Deploy Frontend') {
             steps {
