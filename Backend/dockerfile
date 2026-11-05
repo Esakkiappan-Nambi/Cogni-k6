@@ -1,7 +1,7 @@
 FROM python:3.12-alpine
 
 WORKDIR /app
-ENV CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+ENV CORS_ORIGINS=http://host.docker.internal:5173,http://host.docker.internal:5173
 
 COPY requirements.txt .
 
