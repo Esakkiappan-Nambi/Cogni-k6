@@ -51,25 +51,20 @@ pipeline {
 stage('Deploy Backend') {
     steps {
         withCredentials([
-            string(
-                credentialsId: 'k6-database-url',
-                variable: 'DATABASE_URL'
-            ),
-            string(
-                credentialsId: 'k6-secret-key',
-                variable: 'SECRET_KEY'
-            )
+            string(credentialsId: 'k6-database-url', variable: 'DATABASE_URL'),
+            string(credentialsId: 'k6-secret-key', variable: 'SECRET_KEY')
         ]) {
             sh '''
                 docker rm -f k6-backend || true
 
                 docker run -d \
-                  --name k6-backend \
-                  --restart unless-stopped \
-                  -p 8000:8000 \
-                  -e DATABASE_URL="$DATABASE_URL" \
-                  -e SECRET_KEY="$SECRET_KEY" \
-                  k6-backend:latest
+                    --name k6-backend \
+                    --restart unless-stopped \
+                    -p 8000:8000 \
+                    -e DATABASE_URL="$DATABASE_URL" \
+                    -e SECRET_KEY="$SECRET_KEY" \
+                    -e CORS_ORIGINS="http://localhost:8081,http://127.0.0.1:8081" \
+                    k6-backend:latest
             '''
         }
     }
