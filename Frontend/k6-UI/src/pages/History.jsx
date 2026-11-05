@@ -2,9 +2,9 @@ import { useEffect, useState, useMemo } from "react";
 import { toast } from "react-toastify";
 import API from "../services/api";
 import {
-  Trash2, Search, ExternalLink, FileText,
+  Trash2, Search, FileText,
   BarChart3, Plus, ChevronLeft, ChevronRight, Loader2,
-  ArrowUpDown, ArrowUp, ArrowDown, Gauge,
+  ArrowUpDown, ArrowUp, ArrowDown, Gauge, Activity,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
@@ -77,10 +77,7 @@ export default function History() {
   const [page,    setPage]    = useState(1);
   const [sortBy,  setSortBy]  = useState("started_at");
   const [sortOrder, setSortOrder] = useState("desc");
-  const [telemetry, setTelemetry] = useState({
-    grafana_online: false,
-    influxdb_online: false,
-  });
+
 
   const handleSort = (field) => {
     if (sortBy === field) {
@@ -108,11 +105,7 @@ export default function History() {
     };
   }, []);
 
-  useEffect(() => {
-    API.get("/telemetry-status")
-      .then((r) => setTelemetry(r.data || {}))
-      .catch(() => {});
-  }, []);
+
 
   const deleteRun = async (id) => {
     if (!window.confirm("Delete this execution run record?")) return;

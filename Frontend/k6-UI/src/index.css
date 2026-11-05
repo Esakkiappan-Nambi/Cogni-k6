@@ -1551,3 +1551,73 @@ input[type="checkbox"]:checked::after {
   background: linear-gradient(90deg, #ecfdf5 0%, #eef2ff 100%);
   border-color: #a7f3d0;
 }
+
+
+/* Sidebar Executive Dual-Pill Switcher (Global Fallback) */
+.sb-theme-container {
+  padding: 8px 12px;
+  border-top: 1px solid var(--sb-border, rgba(255, 255, 255, 0.08));
+}
+.sb-theme-segmented {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+}
+.sb-theme-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--tx2, #94a3b8);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: inherit;
+}
+.sb-theme-pill:hover {
+  color: var(--tx, #f8fafc);
+  background: rgba(255, 255, 255, 0.04);
+}
+.sb-theme-pill.active {
+  background: #1e293b;
+  color: #818cf8;
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.sb-theme-pill.active .sb-theme-icon {
+  color: #a5b4fc;
+}
+
+[data-theme="light"] .sb-theme-container {
+  border-top-color: #e2e8f0 !important;
+}
+[data-theme="light"] .sb-theme-segmented {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="light"] .sb-theme-pill {
+  color: #64748b !important;
+}
+[data-theme="light"] .sb-theme-pill:hover {
+  color: #0f172a !important;
+  background: rgba(0, 0, 0, 0.03) !important;
+}
+[data-theme="light"] .sb-theme-pill.active {
+  background: #ffffff !important;
+  color: #4f46e5 !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+}
+[data-theme="light"] .sb-theme-pill.active .sb-theme-icon {
+  color: #4f46e5 !important;
+}

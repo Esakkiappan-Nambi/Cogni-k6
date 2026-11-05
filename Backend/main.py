@@ -1091,10 +1091,14 @@ def _preview_url_is_allowed(url: str) -> bool:
     if parsed.scheme.casefold() not in ("http", "https") or not parsed.netloc:
         return False
 
+    allowed_env = os.getenv("K6_PREVIEW_ALLOWED_HOSTS", "").strip()
+    if not allowed_env:
+        return True
+
     target = _preview_authority_key(parsed.netloc)
     allowed = {
         key
-        for item in os.getenv("K6_PREVIEW_ALLOWED_HOSTS", "").split(",")
+        for item in allowed_env.split(",")
         if (key := _preview_authority_key(item.strip()))
     }
     return target is not None and target in allowed
