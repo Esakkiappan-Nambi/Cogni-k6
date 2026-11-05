@@ -231,24 +231,28 @@ export default function Recorder() {
     stopPoll();
     try {
       await API.post("/recorder/stop", { session_id: session.id });
-      // update backend with latest requests
-      await API.post("/recorder/session/save", {
-        session_id: session.id,
-        name: session.name,
-        port: session.proxyPort,
-        filter: session.filter,
-        requests: session.requests,
-      });
-    } catch {
-      /* ignore */
-    }
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === session.id ? { ...s, status: "stopped" } : s
+        )
+      );
 
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === session.id ? { ...s, status: "stopped" } : s
-      )
-    );
-    toast.info(`Recording saved to disk — ${session.requests.length} request(s) preserved`);
+      try {
+        const res = await API.get(`/recorder/session/${session.id}/requests`);
+        const requests = res.data?.requests || [];
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === session.id ? { ...s, requests } : s
+          )
+        );
+        toast.success(`Recording saved to disk — ${requests.length} request(s) preserved`);
+      } catch (err) {
+        console.error("Recorder stopped, but captured requests could not be refreshed:", err);
+        toast.warn("Recording stopped, but the latest captured requests could not be refreshed.");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to stop the proxy recorder.");
+    }
   };
 
   /* ── clear requests in current session ── */
@@ -485,9 +489,16 @@ export default function Recorder() {
             <strong>Recorder Workflow:</strong> Select or create a session
             <span className="rec-qs-arrow">→</span> Click <strong>Start Recording</strong>
             <span className="rec-qs-arrow">→</span> Point your browser / system proxy to <code>127.0.0.1:{activeSession.proxyPort}</code>
+            <span className="rec-qs-arrow">→</span> Browse from the same host as the backend
             <span className="rec-qs-arrow">→</span> Perform transactions
             <span className="rec-qs-arrow">→</span> Click <strong>Stop Recording</strong> (automatically saved to persistent storage).
             All previous sessions remain safely preserved below!
+          </span>
+        </div>
+        <div className="rec-quickstart">
+          <Info size={15} style={{ flexShrink: 0, marginTop: 2, color: "#f59e0b" }} />
+          <span>
+            For HTTPS traffic, install the mitmproxy certificate on the test browser/device by visiting <code>http://mitm.it</code> through the proxy. Only install it on a trusted test device. Remote clients need a secure tunnel to the backend proxy; do not expose port 8888 publicly.
           </span>
         </div>
 

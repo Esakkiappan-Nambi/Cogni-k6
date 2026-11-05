@@ -1,26 +1,28 @@
-FROM python:3.12-alpine
+FROM python:3.12-slim
 
 WORKDIR /app
 
 ENV CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081
 ENV CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:8000,http://127.0.0.1:8000
+ENV RECORDER_LISTEN_HOST=0.0.0.0
 
 
 COPY requirements.txt .
 
-RUN apk upgrade --no-cache \
-    && apk add --no-cache curl ca-certificates \
-    && curl -L -o /tmp/k6.tar.gz https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL -o /tmp/k6.tar.gz https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
     && tar -xz -C /tmp -f /tmp/k6.tar.gz \
     && mv /tmp/k6-v0.54.0-linux-amd64/k6 /usr/local/bin/k6 \
     && chmod +x /usr/local/bin/k6 \
     && rm -rf /tmp/k6* \
-    && apk del curl \
+    && apt-get purge -y --auto-remove curl \
+    && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt \
     && python -m pip install --no-cache-dir --upgrade pip setuptools \
     && python -m pip uninstall -y setuptools pip \
-    && addgroup -S app \
-    && adduser -S -G app app \
+    && groupadd --system app \
+    && useradd --system --gid app --create-home app \
     && mkdir -p generated_scripts reports uploads uploaded_csv recorder_sessions \
     && chown -R app:app /app
 
@@ -28,7 +30,7 @@ COPY *.py ./
 COPY api_capture/auth_capture.py api_capture/capture.py api_capture/correlate.py ./api_capture/
 COPY router/auto_capture.py router/recorder.py ./router/
 
-EXPOSE 8000
+EXPOSE 8000 8888
 
 USER app
 

@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import time
+import importlib.util
 import threading
 import subprocess
 from typing import Optional, List, Dict, Any
@@ -238,6 +239,12 @@ def start_recording(req: StartRequest):
         if existing and existing.get("process") and existing["process"].poll() is None:
             raise HTTPException(status_code=400, detail="Session is already actively recording")
 
+    if importlib.util.find_spec("mitmproxy") is None:
+        raise HTTPException(
+            status_code=500,
+            detail="mitmproxy is not installed. Rebuild the backend image with the updated requirements.",
+        )
+
     capture_file = _capture_file(req.session_id)
     addon_file   = _addon_file(req.session_id)
 
@@ -262,6 +269,7 @@ def start_recording(req: StartRequest):
         "-c",
         "from mitmproxy.tools.main import mitmdump; mitmdump()",
         "--mode", "regular",
+        "--listen-host", os.getenv("RECORDER_LISTEN_HOST", "127.0.0.1"),
         "--listen-port", str(req.port),
         "--script", addon_file,
         "--quiet",
@@ -278,6 +286,19 @@ def start_recording(req: StartRequest):
             status_code=500,
             detail=f"Failed to start mitmproxy recorder: {e}"
         )
+
+    for _ in range(15):
+        if proc.poll() is not None:
+            _, stderr = proc.communicate()
+            error = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            detail = f"mitmproxy exited during startup: {error[:1000]}" if error else (
+                "mitmproxy exited during startup."
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=detail,
+            )
+        time.sleep(0.1)
 
     # Update metadata
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

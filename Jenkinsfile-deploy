@@ -61,6 +61,7 @@ stage('Deploy Backend') {
                     --name k6-backend \
                     --restart unless-stopped \
                     -p 8000:8000 \
+                    -p 127.0.0.1:8888:8888 \
                     -e DATABASE_URL="$DATABASE_URL" \
                     -e SECRET_KEY="$SECRET_KEY" \
                     -e CORS_ORIGINS="http://localhost:8081,http://127.0.0.1:8081" \
