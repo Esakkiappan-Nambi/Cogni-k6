@@ -43,6 +43,7 @@ scheduler.start()
 
 # ── Global process tracker (for stop-test) ────────────────────────────────────
 running_processes: dict = {}
+live_telemetry: dict = {}
 
 SCRIPT_FOLDER = "generated_scripts"
 P90_METRIC = "p(90)"
