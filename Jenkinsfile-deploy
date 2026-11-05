@@ -6,7 +6,7 @@ pipeline {
         FRONTEND_IMAGE = 'k6-frontend'
         BACKEND_IMAGE = 'k6-backend'
         IMAGE_TAG = 'latest'
-        FRONTEND_PORT = '5173'
+        FRONTEND_PORT = '8081'
         BACKEND_PORT = '8000'
     }
 
@@ -83,7 +83,7 @@ stage('Deploy Backend') {
                     docker run -d \
                       --name k6-frontend \
                       --restart unless-stopped \
-                      -p ${FRONTEND_PORT}:80 \
+                      -p ${FRONTEND_PORT}:5173 \
                       ${FRONTEND_IMAGE}:${IMAGE_TAG}
                 '''
             }
