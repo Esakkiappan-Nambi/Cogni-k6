@@ -48,12 +48,16 @@ pipeline {
             }
         }
 
-        stage('Deploy Backend') {
+stage('Deploy Backend') {
     steps {
         withCredentials([
             string(
                 credentialsId: 'k6-database-url',
                 variable: 'DATABASE_URL'
+            ),
+            string(
+                credentialsId: 'k6-secret-key',
+                variable: 'SECRET_KEY'
             )
         ]) {
             sh '''
@@ -64,6 +68,7 @@ pipeline {
                   --restart unless-stopped \
                   -p 8000:8000 \
                   -e DATABASE_URL="$DATABASE_URL" \
+                  -e SECRET_KEY="$SECRET_KEY" \
                   k6-backend:latest
             '''
         }
