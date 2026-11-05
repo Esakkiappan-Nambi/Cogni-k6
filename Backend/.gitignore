@@ -3,6 +3,7 @@ summary_*.json
 
 # Other common unwanted files
 .env
+.env.example
 __pycache__/
 *.pyc
 .venv/
