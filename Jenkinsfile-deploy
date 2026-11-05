@@ -6,7 +6,7 @@ pipeline {
         FRONTEND_IMAGE = 'k6-frontend'
         BACKEND_IMAGE = 'k6-backend'
         IMAGE_TAG = 'latest'
-        FRONTEND_PORT = '8080'
+        FRONTEND_PORT = '8081'
         BACKEND_PORT = '8000'
     }
 
