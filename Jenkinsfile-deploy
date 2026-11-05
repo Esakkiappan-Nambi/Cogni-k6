@@ -70,19 +70,16 @@ stage('Deploy Backend') {
     }
 }
 
-        stage('Deploy Frontend') {
-            steps {
-                sh '''
-                    docker rm -f k6-frontend || true
-
-                    docker run -d \
-                      --name k6-frontend \
-                      --restart unless-stopped \
-                      -p ${FRONTEND_PORT}:5173 \
-                      ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                '''
-            }
-        }
+stage('Build Frontend Image') {
+    steps {
+        sh '''
+            docker build \
+                --build-arg VITE_API_BASE_URL=http://localhost:8000 \
+                -t k6-frontend:latest \
+                ./Frontend/k6-UI
+        '''
+    }
+}
 
         stage('Verify Deployment') {
             steps {
