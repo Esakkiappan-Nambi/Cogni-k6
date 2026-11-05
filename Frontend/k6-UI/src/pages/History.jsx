@@ -197,7 +197,7 @@ export default function History() {
               Execution History & Diagnostics
             </h2>
             <p style={{ fontSize: 13, color: "var(--tx2)" }}>
-              Browse past performance runs, view reports, or open Grafana dashboards
+              Browse past performance runs, view comprehensive reports, or inspect live dashboards
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -335,16 +335,10 @@ export default function History() {
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
-                            style={!telemetry.grafana_online ? { opacity: 0.45 } : {}}
-                            onClick={() =>
-                              window.open(
-                                `http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${r.id}&from=now-1h&to=now`,
-                                "_blank"
-                              )
-                            }
-                            title={telemetry.grafana_online ? "Open in Grafana" : "Grafana may be offline"}
+                            onClick={() => navigate("/run-test")}
+                            title="Open Native Live Telemetry & Metrics Console"
                           >
-                            <ExternalLink size={12} /> Grafana
+                            <Activity size={12} /> Live Metrics
                           </button>
                         </div>
                       </td>

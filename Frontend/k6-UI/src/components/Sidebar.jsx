@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-toastify";
 import API from "../services/api";
+import "./Sidebar.css";
 
 /* NAV definition matching screenshots exactly */
 const NAV_SECTIONS = [

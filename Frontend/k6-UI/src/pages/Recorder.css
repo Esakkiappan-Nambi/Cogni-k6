@@ -594,3 +594,89 @@
 .btn-rec:hover {
   background: #ef4444 !important;
 }
+
+
+/* ── HTTP Recorder Light Mode Contrast ── */
+[data-theme="light"] .rec-sessions-panel {
+  background: #ffffff !important;
+  border-right: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .rec-sessions-header {
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .rec-sessions-title {
+  color: #334155 !important;
+}
+[data-theme="light"] .rec-session-count {
+  background: #e0e7ff !important;
+  color: #4338ca !important;
+  border-color: #c7d2fe !important;
+}
+[data-theme="light"] .rec-session-item {
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+[data-theme="light"] .rec-session-item:hover {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="light"] .rec-session-item.active {
+  background: #eef2ff !important;
+  border-color: #818cf8 !important;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.12) !important;
+}
+[data-theme="light"] .rec-session-name {
+  color: #0f172a !important;
+}
+[data-theme="light"] .rec-session-item.active .rec-session-name {
+  color: #3730a3 !important;
+}
+[data-theme="light"] .rec-session-meta {
+  color: #64748b !important;
+}
+[data-theme="light"] .rec-session-port {
+  color: #475569 !important;
+}
+[data-theme="light"] .rec-session-req-badge {
+  background: #e2e8f0 !important;
+  color: #334155 !important;
+}
+[data-theme="light"] .rec-status-idle {
+  background: #e2e8f0 !important;
+  color: #475569 !important;
+}
+[data-theme="light"] .rec-sessions-footer {
+  background: #ffffff !important;
+  border-top: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .rec-topbar {
+  background: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .rec-topbar-left h2 {
+  color: #0f172a !important;
+}
+[data-theme="light"] .rec-topbar-left p {
+  color: #64748b !important;
+}
+[data-theme="light"] .rec-detail-header {
+  background: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .rec-detail-title h3 {
+  color: #0f172a !important;
+}
+[data-theme="light"] .rec-search-input {
+  background: #f8fafc !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+}
+[data-theme="light"] .rec-quickstart {
+  background: #eef2ff !important;
+  border-bottom: 1px solid #c7d2fe !important;
+  color: #334155 !important;
+}
+[data-theme="light"] .rec-quickstart strong {
+  color: #1e1b4b !important;
+}

@@ -252,3 +252,99 @@
 [data-theme="light"] .sb-theme-pill.active .sb-theme-icon {
   color: #4f46e5;
 }
+
+/* ── Sidebar Light Mode Complete Theme ── */
+[data-theme="light"] .sidebar {
+  background: #ffffff !important;
+  border-right: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .sb-brand {
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .sb-brand-name {
+  color: #0f172a !important;
+}
+[data-theme="light"] .sb-brand-name span {
+  color: #4f46e5 !important;
+}
+[data-theme="light"] .sb-brand-sub {
+  color: #64748b !important;
+}
+[data-theme="light"] .sb-section-label {
+  color: #94a3b8 !important;
+}
+[data-theme="light"] .sb-item {
+  color: #334155 !important;
+}
+[data-theme="light"] .sb-item:hover {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+[data-theme="light"] .sb-item.active {
+  background: #eef2ff !important;
+  color: #4f46e5 !important;
+  border-color: #c7d2fe !important;
+}
+[data-theme="light"] .sb-item.active::before {
+  background: #4f46e5 !important;
+}
+[data-theme="light"] .sb-badge {
+  background: #e0e7ff !important;
+  color: #4338ca !important;
+  border: 1px solid #c7d2fe !important;
+}
+[data-theme="light"] .sb-divider {
+  background: #e2e8f0 !important;
+}
+[data-theme="light"] .sb-engine-card {
+  background: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+}
+[data-theme="light"] .sb-engine-title {
+  color: #166534 !important;
+}
+[data-theme="light"] .sb-engine-meta {
+  color: #64748b !important;
+}
+[data-theme="light"] .sb-chip {
+  background: #e2e8f0 !important;
+  color: #334155 !important;
+}
+[data-theme="light"] .sb-theme-container {
+  border-top: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .sb-theme-segmented {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="light"] .sb-theme-pill {
+  color: #64748b !important;
+}
+[data-theme="light"] .sb-theme-pill:hover {
+  color: #0f172a !important;
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+[data-theme="light"] .sb-theme-pill.active {
+  background: #ffffff !important;
+  color: #4f46e5 !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+}
+[data-theme="light"] .sb-theme-pill.active .sb-theme-icon {
+  color: #4f46e5 !important;
+}
+[data-theme="light"] .sb-footer {
+  border-top: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .sb-user:hover {
+  background: #f1f5f9 !important;
+}
+[data-theme="light"] .sb-user-name {
+  color: #0f172a !important;
+}
+[data-theme="light"] .sb-user-role {
+  color: #64748b !important;
+}
+[data-theme="light"] .sb-logout {
+  color: #64748b !important;
+}

@@ -97,8 +97,8 @@ export default function Report() {
           </div>
         </div>
         <div className="rpt-actions">
-          <button className="btn btn-ghost btn-sm" onClick={() => window.open(`http://localhost:3000/d/adfqsh7/k6-load-testing-results?var-run_id=${id}`, "_blank")}>
-            <ExternalLink size={13} /> Grafana
+          <button className="btn btn-ghost btn-sm" onClick={() => window.open(`http://localhost:8000/dashboard-report/${id}`, "_blank")}>
+            <ExternalLink size={13} /> Live Dashboard
           </button>
           <button className="btn btn-primary btn-sm" onClick={downloadPDF} disabled={downloading}>
             <Download size={13} /> {downloading ? "Downloading…" : "Download PDF"}

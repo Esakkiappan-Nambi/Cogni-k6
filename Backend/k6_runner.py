@@ -767,6 +767,29 @@ def is_influxdb_available(timeout=0.8):
         connection.close()
 
 
+
+def find_k6_binary():
+    import shutil
+    for cmd in ["k6", "k6.exe"]:
+        p = shutil.which(cmd)
+        if p:
+            return p
+    win_paths = [
+        r"C:\Program Files\k6\k6.exe",
+        r"C:\ProgramData\chocolatey\bin\k6.exe",
+        os.path.expanduser(r"~\scoop\shims\k6.exe"),
+        r"C:\Users\Esakkiappan-Nambi\AppData\Local\Programs\k6\k6.exe",
+    ]
+    for p in win_paths:
+        if os.path.exists(p):
+            return p
+    linux_paths = ["/usr/local/bin/k6", "/usr/bin/k6", "/bin/k6"]
+    for p in linux_paths:
+        if os.path.exists(p):
+            return p
+    return "k6"
+
+
 def execute_k6(script_path, run_id, on_process_created=None, on_output_chunk=None):
     absolute_script_path = os.path.abspath(script_path)
 
@@ -791,8 +814,9 @@ def execute_k6(script_path, run_id, on_process_created=None, on_output_chunk=Non
     env["K6_WEB_DASHBOARD_EXPORT"] = dashboard_html_path
     env["K6_WEB_DASHBOARD_OPEN"] = "false"   # don't auto-open browser
 
+    k6_bin = find_k6_binary()
     k6_cmd = [
-        "k6",
+        k6_bin,
         "run",
         "--tag",
         f"run_id={run_id}",

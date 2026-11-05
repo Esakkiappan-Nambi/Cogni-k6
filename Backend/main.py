@@ -50,13 +50,20 @@ P95_METRIC = "p(95)"
 
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
+cors_env = os.getenv("CORS_ORIGINS", "")
+allowed_origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
+for default_o in [
+    "http://localhost:8081", "http://127.0.0.1:8081",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://10.10.40.107:8081", "http://10.10.40.107:5173"
+]:
+    if default_o not in allowed_origins:
+        allowed_origins.append(default_o)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "").split(",")
-        if origin.strip()
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,11 +94,47 @@ def convert_to_ms(value):
 
 
 def extract_metrics(summary_data, output, summary_path=None):
-    if not summary_data and summary_path:
-        with open(summary_path, "r", encoding="utf-8") as f:
-            summary_data = json.load(f)
+    if not summary_data and summary_path and os.path.exists(summary_path):
+        try:
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary_data = json.load(f)
+        except Exception:
+            pass
+
+    if not summary_data:
+        summary_data = {}
 
     metrics = summary_data.get("metrics", {})
+    if not metrics and output:
+        # Fallback stdout regex parsing
+        m_reqs = re.search(r'http_reqs[.]*:\s*(\d+)\s+(\d+(?:\.\d+)?)/s', output)
+        m_fail = re.search(r'http_req_failed[.]*:\s*([\d\.]+)%', output)
+        m_checks = re.search(r'checks[.]*:\s*([\d\.]+)%\s*✓\s*(\d+)\s*✗\s*(\d+)', output)
+        m_dur = re.search(r'http_req_duration[.]*:\s*avg=([\d\.]+)(m?s).*?p\(90\)=([\d\.]+)(m?s).*?p\(95\)=([\d\.]+)(m?s)', output)
+        
+        total_r = int(m_reqs.group(1)) if m_reqs else 0
+        rate_r  = float(m_reqs.group(2)) if m_reqs else 0.0
+        err_val = float(m_fail.group(1)) if m_fail else 0.0
+        p_chk   = int(m_checks.group(2)) if m_checks else 0
+        f_chk   = int(m_checks.group(3)) if m_checks else 0
+        avg_rt  = float(m_dur.group(1)) if m_dur else 0.0
+        p90_rt  = float(m_dur.group(3)) if m_dur else 0.0
+        p95_rt  = float(m_dur.group(5)) if m_dur else 0.0
+
+        if total_r > 0:
+            summary_data["metrics"] = {"parsed_from_stdout": True}
+            return {
+                "total_requests":    total_r,
+                "throughput":        rate_r,
+                "avg_response_time": avg_rt,
+                "min_response_time": 0.0,
+                "max_response_time": 0.0,
+                "p90":               p90_rt,
+                "p95":               p95_rt,
+                "failed_requests":   f_chk,
+                "passed_checks":     p_chk,
+                "error_rate":        err_val,
+            }
 
     http_reqs = metrics.get("http_reqs", {})
     duration  = metrics.get("http_req_duration", {})
@@ -567,6 +610,58 @@ def terminate_k6_process(run_id: int):
             running_processes.pop(run_id, None)
 
 
+
+def ensure_test_script_exists(test: Test, db: Session) -> str:
+    """
+    Guarantees that a valid k6 script exists on disk before execution.
+    If script_path is missing or non-existent, regenerates it immediately from DB.
+    """
+    if test.script_path and os.path.exists(test.script_path):
+        return test.script_path
+
+    std_path = os.path.join(SCRIPT_FOLDER, f"{test.test_name}.js")
+    if os.path.exists(std_path):
+        test.script_path = std_path
+        db.commit()
+        return std_path
+
+    try:
+        scenario_data = json.loads(test.scenario) if isinstance(test.scenario, str) else (test.scenario or [])
+        assertions_data = json.loads(test.assertions) if isinstance(test.assertions, str) and test.assertions else test.assertions
+        udv_data = json.loads(test.user_defined_variables) if isinstance(test.user_defined_variables, str) and test.user_defined_variables else test.user_defined_variables
+        schedule_data = json.loads(test.schedule) if isinstance(test.schedule, str) and test.schedule else test.schedule
+        cache_data = json.loads(test.cache_config) if isinstance(test.cache_config, str) and test.cache_config else (test.cache_config or {})
+        cookie_data = json.loads(test.cookie_config) if isinstance(test.cookie_config, str) and test.cookie_config else (test.cookie_config or {})
+
+        new_path = generate_k6_script(
+            test_name=test.test_name,
+            users=test.users or 1,
+            duration=test.duration or 30,
+            ramp_up=test.ramp_up or 0,
+            loop_count=test.loop_count or 1,
+            scenario=scenario_data,
+            assertions=assertions_data,
+            csv_enabled=test.enable_csv or False,
+            csv_path=test.csv_path,
+            csv_variables=test.variable_name,
+            cookie_enabled=test.enable_cookie_manager or False,
+            cookie_clear_each_iteration=cookie_data.get("clearEachIteration", False),
+            cache_enabled=test.enable_cache_manager or False,
+            cache_clear_each_iteration=cache_data.get("clearEachIteration", False),
+            cache_max_size=cache_data.get("maxSize", 75),
+            user_defined_variables=udv_data,
+            schedule_enabled=test.schedule_enabled or False,
+            schedule=schedule_data,
+        )
+        test.script_path = new_path
+        db.commit()
+        print(f"[k6] Auto-regenerated script for test #{test.id} at {new_path}")
+        return new_path
+    except Exception as e:
+        print(f"[k6] Error auto-generating script for test #{test.id}: {e}")
+        return std_path
+
+
 def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, assertions_raw):
     """
     Runs k6 in a background thread with its own DB session.
@@ -577,6 +672,8 @@ def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, asser
         print(f"[k6] Starting test_id={test_id} run_id={test_run_id}")
 
         test_obj = db.query(Test).filter(Test.id == test_id).first()
+        if test_obj:
+            script_path = ensure_test_script_exists(test_obj, db)
         live_telemetry[test_run_id] = {
             "id": test_run_id,
             "test_name": test_obj.test_name if test_obj else "Scenario",
@@ -748,10 +845,11 @@ def run_test(
     test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Test Not Found")
-    if not test.script_path or not os.path.exists(test.script_path):
+    script_path = ensure_test_script_exists(test, db)
+    if not os.path.exists(script_path):
         raise HTTPException(
             status_code=400,
-            detail="Test script not found. Please re-save the test.",
+            detail="Could not generate test script. Please check the scenario steps.",
         )
 
     test.status = "running"
