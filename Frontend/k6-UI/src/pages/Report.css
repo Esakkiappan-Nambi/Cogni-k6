@@ -52,6 +52,49 @@
 .rpt-kpi-unit  { font-size: 11px; color: var(--tx3); }
 .rpt-kpi-card.warn .rpt-kpi-value { color: var(--red-tx); }
 
+/* Per-run charts */
+.rpt-chart-section { margin-bottom: 22px; }
+.rpt-chart-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px;
+}
+.rpt-chart-section-header h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0; color: var(--tx); font-size: 15px; font-weight: 650;
+}
+.rpt-chart-section-header h3 svg { color: var(--brand-l); }
+.rpt-live-indicator {
+  color: #10b981; font-size: 11px; font-weight: 700;
+  background: rgba(16,185,129,0.12); border-radius: 12px; padding: 4px 9px;
+}
+.rpt-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.rpt-chart-card {
+  min-width: 0; overflow: hidden;
+  background: linear-gradient(180deg, var(--bg3) 0%, var(--bg2) 100%);
+  border: 1px solid var(--border); border-radius: var(--r3);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+.rpt-chart-card-header {
+  min-height: 58px; padding: 14px 18px 10px;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.rpt-chart-card-header h4 { margin: 0; color: var(--tx); font-size: 13px; font-weight: 650; }
+.rpt-chart-card-header span { color: var(--tx3); font-size: 10px; text-align: right; }
+.rpt-chart-canvas { width: 100%; height: 270px; padding: 12px 12px 6px; }
+.rpt-chart-empty {
+  min-height: 270px; padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--tx3); font-size: 12px; text-align: center;
+}
+.rpt-chart-tooltip {
+  display: flex; gap: 14px; justify-content: space-between;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg2); color: var(--tx); font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+}
+.rpt-chart-tooltip span { font-weight: 700; }
+
 /* metrics table */
 .rpt-metrics-card {
   background: linear-gradient(180deg, var(--bg3) 0%, var(--bg2) 100%);
@@ -62,4 +105,14 @@
   padding: 16px 20px; border-bottom: 1px solid var(--border);
   font-size: 15px; font-weight: 600; color: var(--tx);
   display: flex; align-items: center; gap: 8px;
+}
+
+@media(max-width:850px) {
+  .rpt-chart-grid { grid-template-columns: 1fr; }
+}
+@media(max-width:600px) {
+  .rpt-body { padding: 18px 16px; }
+  .rpt-topbar { padding: 14px 16px; }
+  .rpt-chart-card-header { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .rpt-chart-card-header span { text-align: left; }
 }

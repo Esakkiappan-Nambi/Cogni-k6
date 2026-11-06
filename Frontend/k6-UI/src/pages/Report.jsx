@@ -5,9 +5,25 @@ import {
   FileText, BarChart3, Download, ArrowLeft,
   CheckCircle, AlertCircle, ExternalLink, Copy, Check, Loader2,
 } from "lucide-react";
+import {
+  ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis,
+  CartesianGrid, Tooltip, PieChart, Pie, Legend,
+} from "recharts";
 import Layout from "../components/Layout";
 import { toast } from "react-toastify";
 import "./Report.css";
+
+const ReportChartTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0].payload;
+  return (
+    <div className="rpt-chart-tooltip">
+      <strong>{label || point.name}</strong>
+      <span>{Number(point.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}{point.unit}</span>
+    </div>
+  );
+};
 
 export default function Report() {
   const { id }   = useParams();
@@ -18,15 +34,26 @@ export default function Report() {
 
   useEffect(() => {
     let active = true;
-    API.get(`/report/${id}`)
-      .then((r) => {
-        if (active) setReport(r.data);
-      })
-      .catch(() => {
+    let pollTimeout;
+
+    const loadReport = async () => {
+      try {
+        const { data } = await API.get(`/report/${id}`);
+        if (!active) return;
+
+        setReport(data);
+        if (data.status === "running" || data.status === "stopping") {
+          pollTimeout = setTimeout(loadReport, 1200);
+        }
+      } catch {
         if (active) toast.error("Failed to load report");
-      });
+      }
+    };
+
+    loadReport();
     return () => {
       active = false;
+      clearTimeout(pollTimeout);
     };
   }, [id]);
 
@@ -82,6 +109,20 @@ export default function Report() {
     ["Max Response Time",            report.max_response_time|| 0,  "ms"],
     ["Error Rate",                   `${report.error_rate}%`,        ""],
   ];
+  const latencyData = [
+    { metric: "Min", value: Number(report.min_response_time) || 0, color: "#38bdf8", unit: " ms" },
+    { metric: "Average", value: Number(report.avg_response_time) || 0, color: "#818cf8", unit: " ms" },
+    { metric: "P90", value: Number(report.p90) || 0, color: "#a78bfa", unit: " ms" },
+    { metric: "P95", value: Number(report.p95) || 0, color: "#c084fc", unit: " ms" },
+    { metric: "Max", value: Number(report.max_response_time) || 0, color: "#fb7185", unit: " ms" },
+  ];
+  const errorRate = Math.min(100, Math.max(0, Number(report.error_rate) || 0));
+  const requestOutcomes = [
+    { name: "Successful", value: 100 - errorRate, color: "#10b981", unit: "%" },
+    { name: "Errors", value: errorRate, color: "#f43f5e", unit: "%" },
+  ];
+  const hasLatencyData = latencyData.some(({ value }) => value > 0);
+  const hasRequestData = Number(report.total_requests) > 0;
 
   return (
     <Layout>
@@ -129,6 +170,70 @@ export default function Report() {
             </div>
           ))}
         </div>
+
+        {/* Per-run visualizations */}
+        <section className="rpt-chart-section" aria-label="Result visualizations">
+          <div className="rpt-chart-section-header">
+            <h3><BarChart3 size={17} aria-hidden="true" /> Result visualizations</h3>
+            {(report.status === "running" || report.status === "stopping") && (
+              <span className="rpt-live-indicator">Updating live</span>
+            )}
+          </div>
+          <div className="rpt-chart-grid">
+            <div className="rpt-chart-card">
+              <div className="rpt-chart-card-header">
+                <h4>Response time distribution</h4>
+                <span>Milliseconds</span>
+              </div>
+              {hasLatencyData ? (
+                <div className="rpt-chart-canvas">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={latencyData} margin={{ top: 8, right: 12, left: -12, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                      <XAxis dataKey="metric" tick={{ fill: "var(--tx3)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: "var(--tx3)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<ReportChartTooltip />} />
+                      <Bar dataKey="value" name="Response time" radius={[4, 4, 0, 0]}>
+                        {latencyData.map((entry) => <Cell key={entry.metric} fill={entry.color} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="rpt-chart-empty">Latency data will appear when requests have been recorded.</div>
+              )}
+            </div>
+
+            <div className="rpt-chart-card">
+              <div className="rpt-chart-card-header">
+                <h4>Request success vs. error rate</h4>
+                <span>Based on reported error rate</span>
+              </div>
+              {hasRequestData ? (
+                <div className="rpt-chart-canvas">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={requestOutcomes}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius="55%"
+                        outerRadius="78%"
+                        paddingAngle={errorRate > 0 ? 3 : 0}
+                      >
+                        {requestOutcomes.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+                      </Pie>
+                      <Tooltip content={<ReportChartTooltip />} />
+                      <Legend verticalAlign="bottom" height={28} iconType="circle" />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="rpt-chart-empty">Request outcome data will appear when requests have been recorded.</div>
+              )}
+            </div>
+          </div>
+        </section>
 
         {/* Aggregate metrics table */}
         <div className="rpt-metrics-card">

@@ -1,0 +1,150 @@
+pipeline {
+    agent any
+
+    environment {
+        REMEDIGUARD_URL     = 'http://host.docker.internal:8000'
+        REPO_SLUG           = 'Esakkiappan-Nambi/k6-performance-portal'
+        JENKINS_HOME_VOLUME = 'jenkins_home'
+    }
+
+    stages {
+        stage('Clean workspace') {
+            steps {
+                sh 'git clean -fdx'
+            }
+        }
+
+        stage('Preflight') {
+            steps {
+                sh '''
+                  command -v jq >/dev/null 2>&1 || { echo "ERROR: jq missing"; exit 1; }
+                  command -v docker >/dev/null 2>&1 || { echo "ERROR: docker missing"; exit 1; }
+                  echo "WORKSPACE=${WORKSPACE}"
+                  ls -la "${WORKSPACE}" | head -20
+                '''
+            }
+        }
+
+        stage('Semgrep SAST') {
+            steps {
+                sh '''
+                  set -e
+                  docker run --rm \
+                    --add-host=host.docker.internal:host-gateway \
+                    -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" \
+                    -w "${WORKSPACE}" \
+                    semgrep/semgrep \
+                    semgrep scan --config auto \
+                      --error \
+                      --exclude '**/reports/**' \
+                      --exclude '**/venv/**' \
+                      --exclude '**/generated_scripts/**' \
+                      --exclude '**/recorder_sessions/**' \
+                      --exclude '**/node_modules/**' \
+                      --json . \
+                    > semgrep-results.json
+
+                  echo "=== semgrep-results.json (first 30 lines) ==="
+                  head -30 semgrep-results.json || true
+                  test -s semgrep-results.json
+                '''
+            }
+            post {
+                always {
+                    withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
+                        sh '''
+                          if [ ! -s semgrep-results.json ]; then
+                            echo "semgrep-results.json missing or empty"
+                            exit 1
+                          fi
+
+                          jq -c -n \
+                            --arg repo "${REPO_SLUG}" \
+                            --arg sha "${GIT_COMMIT}" \
+                            --arg branch "${GIT_BRANCH}" \
+                            --slurpfile scan semgrep-results.json \
+                            '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
+                            > semgrep-payload.json
+
+                          HTTP_CODE=$(curl -s -o webhook-response.txt -w "%{http_code}" \
+                            --connect-timeout 5 --max-time 60 --retry 3 --retry-delay 2 --retry-connrefused \
+                            -X POST "${REMEDIGUARD_URL}/webhook/finding?source=semgrep" \
+                            -H "X-Remediguard-Secret: ${RG_SECRET}" \
+                            -H "Content-Type: application/json" \
+                            --data-binary @semgrep-payload.json) || HTTP_CODE="000"
+
+                          echo "Webhook HTTP status: ${HTTP_CODE}"
+                          cat webhook-response.txt 2>/dev/null || true
+
+                          case "$HTTP_CODE" in
+                            2*) echo "Webhook delivered." ;;
+                            *)  echo "WARN: webhook failed (status ${HTTP_CODE}); continuing build." ;;
+                          esac
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Dependency Scan') {
+            steps {
+                sh '''
+                  set -e
+                  docker run --rm \
+                    --add-host=host.docker.internal:host-gateway \
+                    -v "${JENKINS_HOME_VOLUME}:/var/jenkins_home" \
+                    -w "${WORKSPACE}" \
+                    aquasec/trivy \
+                    fs --exit-code 1 --severity HIGH,CRITICAL \
+                    --skip-dirs reports --skip-dirs Backend/reports \
+                    --skip-dirs Backend/venv \
+                    --skip-dirs Backend/generated_scripts \
+                    --skip-dirs Backend/recorder_sessions \
+                    --skip-dirs Frontend/k6-UI/node_modules \
+                    --skip-dirs Frontend/k6-UI/dist \
+                    --format json . \
+                    > trivy-results.json
+
+                  echo "=== trivy-results.json (first 30 lines) ==="
+                  head -30 trivy-results.json || true
+                  test -s trivy-results.json
+                '''
+            }
+            post {
+                always {
+                    withCredentials([string(credentialsId: 'remediguard-webhook-secret', variable: 'RG_SECRET')]) {
+                        sh '''
+                          if [ ! -s trivy-results.json ]; then
+                            echo "trivy-results.json missing or empty"
+                            exit 1
+                          fi
+
+                          jq -c -n \
+                            --arg repo "${REPO_SLUG}" \
+                            --arg sha "${GIT_COMMIT}" \
+                            --arg branch "${GIT_BRANCH}" \
+                            --slurpfile scan trivy-results.json \
+                            '{repo: $repo, commit_sha: $sha, source_branch: $branch, scan_results: $scan[0]}' \
+                            > trivy-payload.json
+
+                          HTTP_CODE=$(curl -s -o webhook-response.txt -w "%{http_code}" \
+                            --connect-timeout 5 --max-time 60 --retry 3 --retry-delay 2 --retry-connrefused \
+                            -X POST "${REMEDIGUARD_URL}/webhook/finding?source=trivy" \
+                            -H "X-Remediguard-Secret: ${RG_SECRET}" \
+                            -H "Content-Type: application/json" \
+                            --data-binary @trivy-payload.json) || HTTP_CODE="000"
+
+                          echo "Webhook HTTP status: ${HTTP_CODE}"
+                          cat webhook-response.txt 2>/dev/null || true
+
+                          case "$HTTP_CODE" in
+                            2*) echo "Webhook delivered." ;;
+                            *)  echo "WARN: webhook failed (status ${HTTP_CODE}); continuing build." ;;
+                          esac
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
