@@ -19,6 +19,14 @@
 .rpt-actions { display: flex; gap: 8px; }
 
 .rpt-body { padding: 24px 32px; flex: 1; overflow-y: auto; }
+.rpt-load-error {
+  max-width: 640px; margin: 72px auto; padding: 28px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: var(--r3);
+  text-align: center;
+}
+.rpt-load-error h2 { color: var(--tx); font-size: 18px; margin-bottom: 8px; }
+.rpt-load-error p { color: var(--tx2); font-size: 13px; }
+.rpt-load-actions { display: flex; justify-content: center; gap: 10px; margin-top: 20px; }
 
 /* verdict card */
 .verdict-card {
@@ -53,7 +61,7 @@
 .rpt-kpi-card.warn .rpt-kpi-value { color: var(--red-tx); }
 
 /* Per-run charts */
-.rpt-chart-section { margin-bottom: 22px; }
+.rpt-chart-section { margin-bottom: 22px; scroll-margin-top: 20px; }
 .rpt-chart-section-header {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-bottom: 12px;

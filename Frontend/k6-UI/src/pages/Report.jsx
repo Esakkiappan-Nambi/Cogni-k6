@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../services/api";
 import {
@@ -28,25 +28,35 @@ const ReportChartTooltip = ({ active, payload, label }) => {
 export default function Report() {
   const { id }   = useParams();
   const navigate = useNavigate();
-  const [report,     setReport]     = useState(null);
+  const [reportState, setReportState] = useState({ id: null, retry: null, report: null, error: "" });
+  const [retry,      setRetry]      = useState(0);
   const [downloading, setDownloading] = useState(false);
   const [copied,      setCopied]    = useState(false);
+  const metricsScrolled = useRef(false);
+  const reportIsCurrent = reportState.id === id && reportState.retry === retry;
+  const report = reportIsCurrent ? reportState.report : null;
+  const loadError = reportIsCurrent ? reportState.error : "";
 
   useEffect(() => {
     let active = true;
     let pollTimeout;
+    metricsScrolled.current = false;
 
     const loadReport = async () => {
       try {
         const { data } = await API.get(`/report/${id}`);
         if (!active) return;
 
-        setReport(data);
+        setReportState({ id, retry, report: data, error: "" });
         if (data.status === "running" || data.status === "stopping") {
           pollTimeout = setTimeout(loadReport, 1200);
         }
-      } catch {
-        if (active) toast.error("Failed to load report");
+      } catch (err) {
+        if (active) {
+          const message = err.response?.data?.detail || "Could not load this execution report.";
+          setReportState({ id, retry, report: null, error: message });
+          toast.error(message);
+        }
       }
     };
 
@@ -55,7 +65,16 @@ export default function Report() {
       active = false;
       clearTimeout(pollTimeout);
     };
-  }, [id]);
+  }, [id, retry]);
+
+  useEffect(() => {
+    if (!report || window.location.hash !== "#metrics" || metricsScrolled.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("metrics")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      metricsScrolled.current = true;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [report]);
 
   const downloadPDF = async () => {
     setDownloading(true);
@@ -76,6 +95,23 @@ export default function Report() {
     setCopied(true); setTimeout(() => setCopied(false), 2000);
     toast.success("Copied");
   };
+
+  if (!report && loadError) return (
+    <Layout>
+      <div className="rpt-load-error" role="alert">
+        <h2>Unable to load execution results</h2>
+        <p>{loadError}</p>
+        <div className="rpt-load-actions">
+          <button className="btn btn-ghost" onClick={() => navigate("/history")}>
+            <ArrowLeft size={14} /> Back to History
+          </button>
+          <button className="btn btn-primary" onClick={() => setRetry((value) => value + 1)}>
+            Try again
+          </button>
+        </div>
+      </div>
+    </Layout>
+  );
 
   if (!report) return (
     <Layout>
@@ -138,7 +174,7 @@ export default function Report() {
           </div>
         </div>
         <div className="rpt-actions">
-          <button className="btn btn-ghost btn-sm" onClick={() => window.open(`http://localhost:8000/dashboard-report/${id}`, "_blank")}>
+          <button className="btn btn-ghost btn-sm" onClick={() => window.open(API.getUri({ url: `/dashboard-report/${id}` }), "_blank", "noopener,noreferrer")}>
             <ExternalLink size={13} /> Live Dashboard
           </button>
           <button className="btn btn-primary btn-sm" onClick={downloadPDF} disabled={downloading}>
@@ -172,7 +208,7 @@ export default function Report() {
         </div>
 
         {/* Per-run visualizations */}
-        <section className="rpt-chart-section" aria-label="Result visualizations">
+        <section id="metrics" className="rpt-chart-section" aria-label="Result visualizations">
           <div className="rpt-chart-section-header">
             <h3><BarChart3 size={17} aria-hidden="true" /> Result visualizations</h3>
             {(report.status === "running" || report.status === "stopping") && (

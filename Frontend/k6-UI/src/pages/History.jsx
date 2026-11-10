@@ -312,7 +312,7 @@ export default function History() {
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => navigate(`/report/${r.id}`)}
-                            title="View Full Execution & SLA Report"
+                            title="View the full execution report"
                           >
                             <BarChart3 size={12} /> Report
                           </button>
@@ -331,10 +331,10 @@ export default function History() {
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
-                            onClick={() => navigate("/run-test")}
-                            title="Open Native Live Telemetry & Metrics Console"
+                            onClick={() => navigate(`/report/${r.id}#metrics`)}
+                            title="View graphical metrics for this execution"
                           >
-                            <Activity size={12} /> Live Metrics
+                            <Activity size={12} /> Metrics
                           </button>
                         </div>
                       </td>
