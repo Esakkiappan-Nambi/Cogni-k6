@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import API from "../services/api";
 import {
   ResponsiveContainer, AreaChart, Area,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
+import { Activity, RefreshCw } from "lucide-react";
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -35,24 +36,67 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 export default function ExecutionChart() {
   const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    API.get("/execution-chart")
-      .then((r) => setData(r.data || []))
-      .catch(() => {});
-  }, []);
+    let active = true;
+    API.get("/execution-chart", { timeout: 15000 })
+      .then((r) => {
+        if (active) {
+          setData(r.data || []);
+          setError(false);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load execution chart:", err);
+        if (active) setError(true);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [retry]);
+
+  if (loading) {
+    return (
+      <div className="dash-empty-state" role="status">
+        <div className="dash-empty-icon"><Activity size={18} /></div>
+        <strong>Loading execution trends</strong>
+        <span>Fetching the latest run outcomes.</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="dash-empty-state" role="alert">
+        <div className="dash-empty-icon"><Activity size={18} /></div>
+        <strong>Unable to load execution trends</strong>
+        <span>Check your connection and try again.</span>
+        <button
+          className="dash-refresh-btn"
+          onClick={() => {
+            setError(false);
+            setLoading(true);
+            setRetry((value) => value + 1);
+          }}
+        >
+          <RefreshCw size={12} /> Try again
+        </button>
+      </div>
+    );
+  }
 
   if (!data.length) {
     return (
-      <div style={{
-        height: 220,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "#64748b",
-        fontSize: 13,
-      }}>
-        No execution data yet — trigger a test run to plot live performance metrics.
+      <div className="dash-empty-state">
+        <div className="dash-empty-icon"><Activity size={18} /></div>
+        <strong>No executions to display yet</strong>
+        <span>Run a test scenario to start building your performance history.</span>
       </div>
     );
   }
@@ -84,11 +128,6 @@ export default function ExecutionChart() {
           tickLine={false}
         />
         <Tooltip content={<CustomTooltip />} />
-        <Legend
-          wrapperStyle={{ fontSize: 12, color: "#94a3b8", paddingTop: 16 }}
-          iconType="circle"
-          iconSize={8}
-        />
         <Area
           type="monotone"
           dataKey="failed"

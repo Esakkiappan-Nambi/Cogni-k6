@@ -10,6 +10,7 @@ import {
 import API from "../services/api";
 import Layout from "../components/Layout";
 import ExecutionChart from "./ExecutionChart";
+import "./Dashboard.css";
 
 /* ── helpers ─────────────────────────────────────────────────── */
 function statusBadge(s) {
@@ -83,28 +84,7 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      {/* ═══════════════════════════════════════════════════
-          PAGE HEADER  (Executive telemetry overview)
-          ═══════════════════════════════════════════════════ */}
-      <div className="page-header">
-        <div className="page-header-left">
-          <div className="page-header-title">Enterprise Dashboard</div>
-          <div className="page-header-sub">
-            Real-time health telemetry, execution performance trends, and cluster workloads
-          </div>
-        </div>
-        <div className="page-header-right">
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)",
-            borderRadius: "9999px", padding: "5px 12px",
-            fontSize: 12, color: "#34d399", fontWeight: 600,
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
-            k6 Engine: Operational
-          </div>
-        </div>
-      </div>
+      <div className="dashboard-page">
 
       {/* ═══════════════════════════════════════════════════
           ACTIVE WORKLOAD BANNER (when a test is running)
@@ -139,11 +119,10 @@ export default function Dashboard() {
       <div className="dash-hero">
         <div className="dash-hero-top">
           <div className="dash-hero-greeting">
-            <h1>Welcome back, {fullName} 👋</h1>
+            <div className="dash-eyebrow">PERFORMANCE OVERVIEW</div>
+            <h1>Welcome back, {fullName}</h1>
             <p>
-              Monitor <span style={{ color: "var(--brand-l)", fontWeight: 600 }}>live</span> k6 test suites,
-              track latency trends & SLA thresholds, and trigger automated load scenarios with{" "}
-              <span style={{ color: "var(--brand-l)", fontWeight: 600 }}>high concurrency</span>.
+              Monitor your load-test scenarios, review execution trends, and launch your next performance test.
             </p>
           </div>
           <div className="dash-hero-actions">
@@ -157,46 +136,40 @@ export default function Dashboard() {
         </div>
 
         {/* ── Native Telemetry status pills row ── */}
-        <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="dash-status-row">
           {/* k6 Engine */}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 9999, padding: "4px 12px", fontSize: 11, fontWeight: 600, color: "#34d399" }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 5px #10b981", animation: "blink 1.8s ease infinite" }} />
-            k6 Engine: Ready
+          <div className="dash-status-pill dash-status-ready">
+            <span className="dash-status-dot" />
+            k6 Engine Ready
           </div>
 
           {/* Native Live Metrics */}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 9999, padding: "4px 12px", fontSize: 11, fontWeight: 600, color: "#818cf8" }}>
+          <div className="dash-status-pill dash-status-telemetry">
             <Zap size={11} />
-            Native Telemetry: Streaming
+            Native Telemetry
           </div>
 
           {/* SLA Tracking */}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)", borderRadius: 9999, padding: "4px 12px", fontSize: 11, fontWeight: 600, color: "#22d3ee" }}>
+          <div className="dash-status-pill dash-status-sla">
             <ShieldCheck size={11} />
-            SLA Thresholds: Active
+            SLA Checks
           </div>
 
           {/* Grafana (if online) */}
           {telemetry.grafana_online && (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 9999, padding: "4px 12px", fontSize: 11, fontWeight: 600, color: "#34d399" }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981" }} />
-              Grafana (3000): Online
+            <div className="dash-status-pill dash-status-ready">
+              <span className="dash-status-dot" />
+              Grafana Online
             </div>
           )}
 
           {/* Refresh button */}
           <button
             onClick={refresh}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5,
-              background: "transparent", border: "1px solid var(--border)",
-              borderRadius: 9999, padding: "4px 12px", fontSize: 11,
-              fontWeight: 500, color: "var(--tx2)", cursor: "pointer",
-              fontFamily: "inherit", transition: "var(--t)"
-            }}
+            className="dash-refresh-btn"
             title="Refresh dashboard stats"
           >
-            <BarChart3 size={11} /> Refresh
+            <BarChart3 size={12} /> Refresh
           </button>
         </div>
       </div>
@@ -217,7 +190,8 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="dash-stat-sub">
-            <span style={{ color: "#34d399", fontWeight: 600 }}>● Active Catalog</span> · scenarios defined
+            <span className="dash-catalog-state">Active catalog</span>
+            <span>Scenarios available to run</span>
           </div>
         </div>
 
@@ -241,7 +215,7 @@ export default function Dashboard() {
         <div className="dash-stat">
           <div className="dash-stat-top">
             <div>
-              <div className="dash-stat-label">SLA Pass Rate</div>
+              <div className="dash-stat-label">Run Success Rate</div>
               <div className="dash-stat-value">{successRate.toFixed(1)}%</div>
             </div>
             <div className="dash-stat-icon ds-green">
@@ -252,7 +226,7 @@ export default function Dashboard() {
             <div className="dash-stat-progress-fill" style={{ width: `${Math.min(successRate, 100)}%` }} />
           </div>
           <div className="dash-stat-sub" style={{ marginTop: 2 }}>
-            <span>Target SLA: &gt; 99% availability</span>
+            <span>Completed executions that passed</span>
           </div>
         </div>
 
@@ -268,7 +242,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="dash-stat-sub">
-            <span>{stats.running_runs > 0 ? "Live workloads executing" : "Cluster idle & ready"}</span>
+            <span>{stats.running_runs > 0 ? "Workloads currently executing" : "No active workloads"}</span>
           </div>
         </div>
       </div>
@@ -282,8 +256,8 @@ export default function Dashboard() {
         <div className="dash-chart-card">
           <div className="dash-chart-hdr">
             <div className="dash-chart-hdr-left">
-              <h3><TrendingUp size={17} color="var(--brand-l)" /> Execution Performance Trend</h3>
-              <p>Cumulative test outcomes and pass/fail telemetry over recent execution runs</p>
+              <h3><TrendingUp size={17} color="var(--brand-l)" /> Execution outcomes</h3>
+              <p>Cumulative completed and failed runs across your execution history</p>
             </div>
             <div className="dash-chart-legend">
               <div className="dash-chart-legend-item">
@@ -367,10 +341,13 @@ export default function Dashboard() {
                 )) : (
                   <tr>
                     <td colSpan={7}>
-                      <div className="empty-state" style={{ padding: "40px" }}>
-                        <FileText size={32} />
-                        <h3>No test scenarios yet</h3>
-                        <p>Click "Create Test Scenario" to build your first k6 test.</p>
+                      <div className="dash-empty-state">
+                        <div className="dash-empty-icon"><FileText size={18} /></div>
+                        <strong>No test scenarios yet</strong>
+                        <span>Create a scenario to start running performance tests.</span>
+                        <button className="btn btn-primary btn-sm" onClick={() => navigate("/createtest")}>
+                          <Plus size={13} /> Create a scenario
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -380,6 +357,7 @@ export default function Dashboard() {
           )}
         </div>
 
+      </div>
       </div>
     </Layout>
   );
