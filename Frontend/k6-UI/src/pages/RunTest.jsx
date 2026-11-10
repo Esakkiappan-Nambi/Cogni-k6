@@ -6,7 +6,7 @@ import {
   AlertTriangle, RefreshCw, Plus, Activity, BarChart3,
   ChevronLeft, ChevronRight, Users, Clock,
   ArrowUp, ArrowDown, ArrowUpDown, Gauge, CheckCircle2,
-  Zap, ShieldCheck, TrendingUp,
+  Zap, ShieldCheck, TrendingUp, X,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area,
@@ -345,12 +345,15 @@ export default function RunTest() {
 
   /* ── filter & sort ────────────────────────────────────────── */
   const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
     return tests
-      .filter((t) =>
-        t.test_name?.toLowerCase().includes(search.toLowerCase()) ||
-        String(t.id).includes(search) ||
-        t.status?.toLowerCase().includes(search.toLowerCase())
-      )
+      .filter((t) => [
+        t.test_name,
+        t.id,
+        t.status,
+        t.users,
+        t.duration,
+      ].some((value) => String(value ?? "").toLowerCase().includes(query)))
       .sort((a, b) => {
         let valA = a[sortBy];
         let valB = b[sortBy];
@@ -405,17 +408,28 @@ export default function RunTest() {
         </div>
 
         {/* ── Search & Sorting Bar ── */}
-        <div className="rt-table-toolbar">
+        <div className="rt-table-toolbar" role="search" aria-label="Filter and sort test scenarios">
           <div className="rt-search-wrap">
             <Search size={14} className="rt-search-icon" />
             <input
               type="text"
               className="rt-search-input"
               aria-label="Filter test scenarios"
-              placeholder="Filter scenarios by name, ID, or status…"
+              placeholder="Search scenarios by name, ID, VUs, duration or status"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
+            {search && (
+              <button
+                type="button"
+                className="rt-search-clear"
+                aria-label="Clear scenario search"
+                title="Clear search"
+                onClick={() => { setSearch(""); setPage(1); }}
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           <div className="rt-toolbar-actions">
