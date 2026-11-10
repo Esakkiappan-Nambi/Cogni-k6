@@ -8,6 +8,7 @@ pipeline {
         IMAGE_TAG = 'latest'
         FRONTEND_PORT = '8081'
         BACKEND_PORT = '8000'
+        RECORDER_DATA_VOLUME = 'k6-recorder-data'
     }
 
     stages {
@@ -55,11 +56,24 @@ stage('Deploy Backend') {
             string(credentialsId: 'k6-secret-key', variable: 'SECRET_KEY')
         ]) {
             sh '''
+                docker volume create "$RECORDER_DATA_VOLUME" >/dev/null
+
+                if docker inspect k6-backend >/dev/null 2>&1; then
+                    docker run --rm \
+                        --user 0:0 \
+                        --volumes-from k6-backend:ro \
+                        -v "$RECORDER_DATA_VOLUME:/recorder-data" \
+                        --entrypoint sh \
+                        "${BACKEND_IMAGE}:${IMAGE_TAG}" \
+                        -c 'if [ -z "$(ls -A /recorder-data 2>/dev/null)" ]; then cp -a /app/recorder_sessions/. /recorder-data/; chown -R app:app /recorder-data; fi'
+                fi
+
                 docker rm -f k6-backend || true
 
                 docker run -d \
                     --name k6-backend \
                     --restart unless-stopped \
+                    -v "$RECORDER_DATA_VOLUME:/app/recorder_sessions" \
                     -p 8000:8000 \
                     -p 127.0.0.1:8888:8888 \
                     -e DATABASE_URL="$DATABASE_URL" \

@@ -76,11 +76,10 @@ def _read_captures(session_id: int) -> List[Dict[str, Any]]:
 
 def _write_captures(session_id: int, requests: List[Dict[str, Any]]) -> None:
     path = _capture_file(session_id)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(requests, f, indent=2)
-    except Exception as e:
-        print(f"[recorder] Error writing captures: {e}")
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(requests, f, indent=2)
+    os.replace(temp_path, path)
 
 
 # ── mitmproxy inline addon template ───────────────────────────────────────────
@@ -180,7 +179,7 @@ class StartRequest(BaseModel):
     name: Optional[str] = "Recording Session"
     port: int = 8888
     filter: Optional[str] = ""
-    append: bool = False
+    append: bool = True
 
 
 class StopRequest(BaseModel):
@@ -228,6 +227,44 @@ def get_requests(session_id: int):
     return {"requests": reqs, "count": len(reqs), "session_id": session_id}
 
 
+@router.delete("/session/{session_id}/requests/{request_id}")
+def delete_request(session_id: int, request_id: int):
+    """Delete one captured request and persist the updated session."""
+    with _lock:
+        active = _active_processes.get(session_id)
+        process = active.get("process") if active else None
+        if process and process.poll() is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Stop recording before deleting a captured request.",
+            )
+
+        requests = _read_captures(session_id)
+        remaining = [request for request in requests if str(request.get("id")) != str(request_id)]
+        if len(remaining) == len(requests):
+            raise HTTPException(status_code=404, detail="Captured request not found.")
+
+        try:
+            _write_captures(session_id, remaining)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="Could not save the updated recording.") from exc
+
+        index = _load_index()
+        for session in index:
+            if session.get("id") == session_id:
+                session["request_count"] = len(remaining)
+                session["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                break
+        _save_index(index)
+
+    return {
+        "message": "Captured request deleted.",
+        "session_id": session_id,
+        "request_id": request_id,
+        "request_count": len(remaining),
+    }
+
+
 @router.post("/start")
 def start_recording(req: StartRequest):
     """
@@ -260,7 +297,7 @@ def start_recording(req: StartRequest):
     capture_file = _capture_file(req.session_id)
     addon_file   = _addon_file(req.session_id)
 
-    # If not appending, clear previous capture file
+    # Keep prior captures unless a caller explicitly requests a clean session.
     if not req.append and os.path.exists(capture_file):
         try:
             os.remove(capture_file)
@@ -440,15 +477,19 @@ def save_session(req: SaveSessionRequest):
 @router.delete("/session/{session_id}/clear")
 def clear_session_requests(session_id: int):
     """Clear all captured requests for a session without deleting the session itself."""
-    capture_file = _capture_file(session_id)
-    if os.path.exists(capture_file):
-        try:
-            with open(capture_file, "w", encoding="utf-8") as f:
-                json.dump([], f)
-        except Exception:
-            pass
-
     with _lock:
+        active = _active_processes.get(session_id)
+        process = active.get("process") if active else None
+        if process and process.poll() is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Stop recording before clearing captured requests.",
+            )
+        try:
+            _write_captures(session_id, [])
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="Could not clear the saved recording.") from exc
+
         index = _load_index()
         for s in index:
             if s.get("id") == session_id:

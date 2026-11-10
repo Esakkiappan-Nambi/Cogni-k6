@@ -149,26 +149,27 @@ export default function Recorder() {
     fetchBackendSessions();
   }, []);
 
-  // When activeId changes, if session has 0 requests in memory, fetch requests from backend
+  // Reload the selected session from persistent storage, not a stale local copy.
   useEffect(() => {
+    let active = true;
     const loadSessionRequests = async () => {
       if (!activeId) return;
-      const cur = sessions.find((s) => s.id === activeId);
-      if (cur && (!cur.requests || cur.requests.length === 0)) {
-        try {
-          const res = await API.get(`/recorder/session/${activeId}/requests`);
-          if (res.data?.requests && res.data.requests.length > 0) {
-            setSessions((prev) =>
-              prev.map((s) => s.id === activeId ? { ...s, requests: res.data.requests } : s)
-            );
-          }
-        } catch {
-          // ignore error
+      try {
+        const res = await API.get(`/recorder/session/${activeId}/requests`);
+        if (active && Array.isArray(res.data?.requests)) {
+          setSessions((prev) =>
+            prev.map((s) => s.id === activeId ? { ...s, requests: res.data.requests } : s)
+          );
         }
+      } catch (err) {
+        console.error("Could not load saved requests for this session:", err);
       }
     };
     loadSessionRequests();
-  }, [activeId, sessions]);
+    return () => {
+      active = false;
+    };
+  }, [activeId]);
 
   /* ── polling for live proxy captures ── */
   const startPoll = (sessionId) => {
@@ -199,20 +200,20 @@ export default function Recorder() {
   useEffect(() => () => stopPoll(), []);
 
   /* ── start recording ── */
-  const startRecording = async (session, append = false) => {
+  const startRecording = async (session) => {
     try {
       await API.post("/recorder/start", {
         session_id: session.id,
         name: session.name,
         port: session.proxyPort,
         filter: session.filter,
-        append: append,
+        append: true,
       });
 
       setSessions((prev) =>
         prev.map((s) =>
           s.id === session.id
-            ? { ...s, status: "recording", requests: append ? s.requests : [] }
+            ? { ...s, status: "recording" }
             : s
         )
       );
@@ -257,17 +258,41 @@ export default function Recorder() {
 
   /* ── clear requests in current session ── */
   const clearSessionRequests = async (sessionId) => {
-    stopPoll();
     try {
       await API.delete(`/recorder/session/${sessionId}/clear`);
-    } catch {
-      // ignore
+      stopPoll();
+      setSessions((prev) =>
+        prev.map((s) => s.id === sessionId ? { ...s, requests: [] } : s)
+      );
+      setSelectedReq(null);
+      toast.info("Cleared requests for active session");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not clear saved requests.");
     }
-    setSessions((prev) =>
-      prev.map((s) => s.id === sessionId ? { ...s, requests: [] } : s)
-    );
-    setSelectedReq(null);
-    toast.info("Cleared requests for active session");
+  };
+
+  const deleteRequest = async (request) => {
+    if (activeSession.status === "recording") {
+      toast.info("Stop recording before deleting a request.");
+      return;
+    }
+    if (!window.confirm(`Delete this ${request.method} request?\n${request.url}`)) return;
+    try {
+      await API.delete(`/recorder/session/${activeId}/requests/${request.id}`);
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeId
+            ? { ...s, requests: s.requests.filter((item) => String(item.id) !== String(request.id)) }
+            : s
+        )
+      );
+      setSelectedReq((selected) => (
+        String(selected?.id) === String(request.id) ? null : selected
+      ));
+      toast.success("Request deleted from saved recording.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not delete the saved request.");
+    }
   };
 
   /* ── HAR import ── */
@@ -604,14 +629,9 @@ export default function Recorder() {
                   </button>
                 ) : (
                   <>
-                    <button className="btn btn-rec btn-sm" onClick={() => startRecording(activeSession, false)}>
-                      <Radio size={13} /> Fresh Record
+                    <button className="btn btn-rec btn-sm" onClick={() => startRecording(activeSession)}>
+                      <Radio size={13} /> Start Recording
                     </button>
-                    {activeSession.requests?.length > 0 && (
-                      <button className="btn btn-ghost btn-sm" title="Append additional traffic to this session" onClick={() => startRecording(activeSession, true)}>
-                        <Plus size={13} /> Append Traffic
-                      </button>
-                    )}
                   </>
                 )}
 
@@ -678,6 +698,7 @@ export default function Recorder() {
                         <th style={{ width: 85 }}>Duration</th>
                         <th style={{ width: 85 }}>Size</th>
                         <th style={{ width: 85 }}>Time</th>
+                        <th style={{ width: 52, textAlign: "center" }}>Delete</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -702,6 +723,20 @@ export default function Recorder() {
                           <td style={{ color: "var(--text-muted)", fontSize: 11 }}>
                             {r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "—"}
                           </td>
+                          <td style={{ textAlign: "center" }}>
+                            <button
+                              className="btn btn-ghost btn-icon btn-sm rec-request-delete"
+                              title={`Delete ${r.method} request`}
+                              aria-label={`Delete ${r.method} request`}
+                              disabled={activeSession.status === "recording"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteRequest(r);
+                              }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -711,7 +746,7 @@ export default function Recorder() {
                     <div className="rec-empty-icon"><Wifi size={24} /></div>
                     <h3>No recorded requests in this session</h3>
                     <p>
-                      Click <strong>Fresh Record</strong> to capture live browser traffic, or{" "}
+                      Click <strong>Start Recording</strong> to capture and keep previous requests, or{" "}
                       <a style={{ color: "var(--brand-light)", cursor: "pointer", textDecoration: "underline" }} onClick={() => fileRef.current?.click()}>
                         import a HAR file
                       </a>{" "}
