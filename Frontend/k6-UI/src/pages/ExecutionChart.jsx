@@ -37,7 +37,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 export default function ExecutionChart() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
@@ -46,12 +46,21 @@ export default function ExecutionChart() {
       .then((r) => {
         if (active) {
           setData(r.data || []);
-          setError(false);
+          setError("");
         }
       })
       .catch((err) => {
         console.error("Failed to load execution chart:", err);
-        if (active) setError(true);
+        const status = err.response?.status;
+        const detail = err.response?.data?.detail;
+        const message = status === 404
+          ? "The deployed backend is missing this chart endpoint. Rebuild and restart the backend container."
+          : err.code === "ECONNABORTED"
+            ? "The backend timed out while loading execution history. Check the backend and database, then try again."
+            : !err.response
+              ? `Cannot reach the backend at ${API.defaults.baseURL}. Check that it is running and accessible.`
+              : detail || `The chart request failed with HTTP ${status}. Check the backend logs for this request.`;
+        if (active) setError(message);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -76,11 +85,11 @@ export default function ExecutionChart() {
       <div className="dash-empty-state" role="alert">
         <div className="dash-empty-icon"><Activity size={18} /></div>
         <strong>Unable to load execution trends</strong>
-        <span>Check your connection and try again.</span>
+        <span>{error}</span>
         <button
           className="dash-refresh-btn"
           onClick={() => {
-            setError(false);
+            setError("");
             setLoading(true);
             setRetry((value) => value + 1);
           }}

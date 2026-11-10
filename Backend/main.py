@@ -1396,16 +1396,24 @@ def recent_tests(db: DatabaseSession, current_user: AuthenticatedUser):
 
 
 @app.get("/execution-chart")
-def execution_chart(db: DatabaseSession):
-    runs = db.query(TestRun).order_by(TestRun.id).all()
+def execution_chart(db: DatabaseSession, current_user: AuthenticatedUser):
+    runs = (
+        db.query(TestRun.id, TestRun.status)
+        .join(Test, Test.id == TestRun.test_id)
+        .filter(Test.user_id == current_user.id)
+        .order_by(TestRun.id.desc())
+        .limit(100)
+        .all()
+    )
+    runs.reverse()
     completed = failed = 0
     data = []
-    for run in runs:
-        if run.status == "completed":
+    for run_id, status in runs:
+        if status == "completed":
             completed += 1
-        elif run.status == "failed":
+        elif status == "failed":
             failed += 1
-        data.append({"run_id": run.id, "completed": completed, "failed": failed})
+        data.append({"run_id": run_id, "completed": completed, "failed": failed})
     return data
 
 

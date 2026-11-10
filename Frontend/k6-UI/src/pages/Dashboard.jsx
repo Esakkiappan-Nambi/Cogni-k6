@@ -257,7 +257,7 @@ export default function Dashboard() {
           <div className="dash-chart-hdr">
             <div className="dash-chart-hdr-left">
               <h3><TrendingUp size={17} color="var(--brand-l)" /> Execution outcomes</h3>
-              <p>Cumulative completed and failed runs across your execution history</p>
+              <p>Pass and failure trends across your latest 100 executions</p>
             </div>
             <div className="dash-chart-legend">
               <div className="dash-chart-legend-item">
