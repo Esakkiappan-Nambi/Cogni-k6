@@ -238,6 +238,18 @@ def start_recording(req: StartRequest):
         existing = _active_processes.get(req.session_id)
         if existing and existing.get("process") and existing["process"].poll() is None:
             raise HTTPException(status_code=400, detail="Session is already actively recording")
+        for session_id, active in _active_processes.items():
+            process = active.get("process")
+            if (
+                session_id != req.session_id
+                and active.get("port") == req.port
+                and process
+                and process.poll() is None
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Port {req.port} is already in use by another recording session.",
+                )
 
     if importlib.util.find_spec("mitmproxy") is None:
         raise HTTPException(
@@ -357,6 +369,11 @@ def stop_recording(req: StopRequest):
                     subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
                 else:
                     proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
             except Exception as e:
                 print(f"[recorder] Error stopping proxy: {e}")
 

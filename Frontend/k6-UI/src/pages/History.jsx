@@ -90,12 +90,15 @@ export default function History() {
 
   useEffect(() => {
     let active = true;
-    API.get("/test-runs")
+    API.get("/test-runs", { timeout: 15000 })
       .then((r) => {
         if (active) setRuns(r.data || []);
       })
-      .catch(() => {
-        if (active) toast.error("Failed to load execution history");
+      .catch((err) => {
+        if (active) {
+          console.error("Failed to load execution history:", err);
+          toast.error(err.response?.data?.detail || "Could not load execution history. Please try refreshing.");
+        }
       })
       .finally(() => {
         if (active) setLoading(false);

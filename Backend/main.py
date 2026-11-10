@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from csv_handler import save_csv
 from database import SessionLocal, engine, Base
 from fastapi import Depends
+from sqlalchemy import func
 from auth import get_current_user
 import re
 import sys
@@ -935,46 +936,68 @@ def stop_test(
 
 @app.get("/tests")
 def get_tests(db: DatabaseSession, current_user: AuthenticatedUser):
-    tests = db.query(Test).filter(Test.user_id == current_user.id).all()
-    result = []
-    for test in tests:
-        latest_run = (
-            db.query(TestRun)
-            .filter(TestRun.test_id == test.id)
-            .order_by(TestRun.id.desc())
-            .first()
+    latest_run_ids = (
+        db.query(
+            TestRun.test_id.label("test_id"),
+            func.max(TestRun.id).label("latest_run_id"),
         )
-        result.append({
-            "id":         test.id,
-            "test_name":  test.test_name,
-            "users":      test.users,
-            "duration":   test.duration,
-            "status":     latest_run.status if latest_run else "Not Run",
-            "created_at": test.created_at,
-        })
-    return result
+        .join(Test, Test.id == TestRun.test_id)
+        .filter(Test.user_id == current_user.id)
+        .group_by(TestRun.test_id)
+        .subquery()
+    )
+    rows = (
+        db.query(
+            Test.id,
+            Test.test_name,
+            Test.users,
+            Test.duration,
+            TestRun.status,
+            Test.created_at,
+        )
+        .outerjoin(latest_run_ids, latest_run_ids.c.test_id == Test.id)
+        .outerjoin(TestRun, TestRun.id == latest_run_ids.c.latest_run_id)
+        .filter(Test.user_id == current_user.id)
+        .all()
+    )
+    return [
+        {
+            "id": test_id,
+            "test_name": test_name,
+            "users": users,
+            "duration": duration,
+            "status": status or "Not Run",
+            "created_at": created_at,
+        }
+        for test_id, test_name, users, duration, status, created_at in rows
+    ]
 
 
 @app.get("/test-runs")
 def get_test_runs(db: DatabaseSession, current_user: AuthenticatedUser):
     runs = (
-        db.query(TestRun)
+        db.query(
+            TestRun.id,
+            TestRun.test_id,
+            Test.test_name,
+            TestRun.status,
+            TestRun.started_at,
+        )
         .join(Test, Test.id == TestRun.test_id)
         .filter(Test.user_id == current_user.id)
         .order_by(TestRun.id.desc())
         .all()
     )
-    result = []
-    for run in runs:
-        test = db.query(Test).filter(Test.id == run.test_id).first()
-        result.append({
-            "id":         run.id,
-            "test_id":    run.test_id,
-            "test_name":  test.test_name if test else "Unknown",
-            "status":     run.status,
-            "started_at": run.started_at,
-        })
-    return result
+    return [
+        {
+            "id": run_id,
+            "test_id": test_id,
+            "test_name": test_name or "Unknown",
+            "status": status,
+            "started_at": started_at,
+        }
+        for run_id, test_id, test_name, status, started_at in runs
+    ]
 
 
 @app.get("/report/{run_id}")

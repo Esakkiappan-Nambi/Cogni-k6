@@ -166,9 +166,12 @@ export default function RunTest() {
   /* ── load ─────────────────────────────────────────────────── */
   const loadTests = useCallback(async () => {
     try {
-      const r = await API.get("/tests");
+      const r = await API.get("/tests", { timeout: 15000 });
       setTests(r.data || []);
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error("Failed to load test scenarios:", err);
+      toast.error(err.response?.data?.detail || "Could not load test scenarios. Please try refreshing.");
+    }
     finally { setLoading(false); }
   }, []);
 
@@ -243,7 +246,7 @@ export default function RunTest() {
 
     autoRef.current = setInterval(async () => {
       try {
-        const r = await API.get("/tests");
+        const r = await API.get("/tests", { timeout: 15000 });
         const all = r.data || [];
         setTests(all);
         const running = all.find((t) => t.status === "running");
@@ -256,7 +259,7 @@ export default function RunTest() {
           }
         }
       } catch { /* ignore */ }
-    }, 4000);
+    }, 10000);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
