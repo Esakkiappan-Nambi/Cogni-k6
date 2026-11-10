@@ -293,6 +293,58 @@ stage('Trivy Image Scan - Backend') {
                 )
             }
         }
+
+        stage('Security Quality Gate - Container Images') {
+    steps {
+        sh '''
+            echo "Checking container image vulnerabilities..."
+
+            for REPORT in \
+                "${REPORT_DIR}/trivy-frontend-image.json" \
+                "${REPORT_DIR}/trivy-backend-image.json"
+            do
+                if [ ! -f "$REPORT" ]; then
+                    echo "ERROR: Report not found: $REPORT"
+                    exit 1
+                fi
+
+                COUNT=$(jq '[
+                    .Results[]?.Vulnerabilities[]?
+                    | select(
+                        .Severity == "HIGH"
+                        or .Severity == "CRITICAL"
+                    )
+                ] | length' "$REPORT")
+
+                echo "$REPORT: $COUNT HIGH/CRITICAL vulnerabilities"
+
+                if [ "$COUNT" -gt 0 ]; then
+                    echo "Vulnerabilities found:"
+                    jq -r '
+                        .Results[]?.Vulnerabilities[]?
+                        | select(
+                            .Severity == "HIGH"
+                            or .Severity == "CRITICAL"
+                        )
+                        | [
+                            .VulnerabilityID,
+                            .PkgName,
+                            .InstalledVersion,
+                            .Severity,
+                            (.Title // "No title")
+                        ]
+                        | @tsv
+                    ' "$REPORT"
+
+                    echo "Security quality gate FAILED."
+                    exit 1
+                fi
+            done
+
+            echo "Security quality gate PASSED."
+        '''
+    }
+}
     }
 
     post {
