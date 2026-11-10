@@ -631,8 +631,12 @@ def ensure_test_script_exists(test: Test, db: Session) -> str:
         assertions_data = json.loads(test.assertions) if isinstance(test.assertions, str) and test.assertions else test.assertions
         udv_data = json.loads(test.user_defined_variables) if isinstance(test.user_defined_variables, str) and test.user_defined_variables else test.user_defined_variables
         schedule_data = json.loads(test.schedule) if isinstance(test.schedule, str) and test.schedule else test.schedule
-        cache_data = json.loads(test.cache_config) if isinstance(test.cache_config, str) and test.cache_config else (test.cache_config or {})
-        cookie_data = json.loads(test.cookie_config) if isinstance(test.cookie_config, str) and test.cookie_config else (test.cookie_config or {})
+        cookie_policy = test.cookie_policy or "strict"
+        cookie_data = {}
+        if isinstance(cookie_policy, str) and cookie_policy.lstrip().startswith("{"):
+            parsed_cookie_policy = json.loads(cookie_policy)
+            if isinstance(parsed_cookie_policy, dict):
+                cookie_data = parsed_cookie_policy
 
         new_path = generate_k6_script(
             test_name=test.test_name,
@@ -642,15 +646,16 @@ def ensure_test_script_exists(test: Test, db: Session) -> str:
             loop_count=test.loop_count or 1,
             scenario=scenario_data,
             assertions=assertions_data,
-            csv_enabled=test.enable_csv or False,
+            csv_enabled=test.csv_enabled or False,
             csv_path=test.csv_path,
-            csv_variables=test.variable_name,
-            cookie_enabled=test.enable_cookie_manager or False,
-            cookie_clear_each_iteration=cookie_data.get("clearEachIteration", False),
-            cache_enabled=test.enable_cache_manager or False,
-            cache_clear_each_iteration=cache_data.get("clearEachIteration", False),
-            cache_max_size=cache_data.get("maxSize", 75),
-            user_defined_variables=udv_data,
+            csv_variables=test.csv_variables,
+            cookie_enabled=test.cookie_enabled or False,
+            cookie_clear_each_iteration=test.cookie_clear_each_iteration or False,
+            cookie_user_cookies=cookie_data.get("userCookies") or cookie_data.get("cookies", []),
+            cache_enabled=test.cache_enabled or False,
+            cache_clear_each_iteration=test.cache_clear_each_iteration or False,
+            cache_max_size=test.cache_max_size or 75,
+            user_defined_variables=udv_data if test.udv_enabled else [],
             schedule_enabled=test.schedule_enabled or False,
             schedule=schedule_data,
         )
@@ -660,7 +665,7 @@ def ensure_test_script_exists(test: Test, db: Session) -> str:
         return new_path
     except Exception as e:
         print(f"[k6] Error auto-generating script for test #{test.id}: {e}")
-        return std_path
+        raise RuntimeError(f"Could not regenerate script for test #{test.id}") from e
 
 
 def run_k6_in_background(test_id: int, test_run_id: int, script_path: str, assertions_raw):
@@ -846,11 +851,17 @@ def run_test(
     test = db.query(Test).filter(Test.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Test Not Found")
-    script_path = ensure_test_script_exists(test, db)
+    try:
+        script_path = ensure_test_script_exists(test, db)
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not regenerate the test script from the saved scenario.",
+        ) from e
     if not os.path.exists(script_path):
         raise HTTPException(
-            status_code=400,
-            detail="Could not generate test script. Please check the scenario steps.",
+            status_code=500,
+            detail="The regenerated test script was not found on the server.",
         )
 
     test.status = "running"
