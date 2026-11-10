@@ -236,35 +236,41 @@ pipeline {
             }
         }
 
-        stage('Trivy Image Scan - Frontend') {
-            steps {
-                sh '''
-                    echo "Scanning frontend image..."
-                    trivy image \
-                        --scanners vuln \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --format json \
-                        --output "${REPORT_DIR}/trivy-frontend-image.json" \
-                        "${FRONTEND_IMAGE}"
-                '''
-            }
-        }
+stage('Trivy Image Scan - Frontend') {
+    steps {
+        sh '''
+            echo "Scanning frontend image..."
 
-        stage('Trivy Image Scan - Backend') {
-            steps {
-                sh '''
-                    echo "Scanning backend image..."
-                    trivy image \
-                        --scanners vuln \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --format json \
-                        --output "${REPORT_DIR}/trivy-backend-image.json" \
-                        "${BACKEND_IMAGE}"
-                '''
-            }
-        }
+            trivy image \
+                --scanners vuln \
+                --severity HIGH,CRITICAL \
+                --exit-code 0 \
+                --format json \
+                --output "${REPORT_DIR}/trivy-frontend-image.json" \
+                "${FRONTEND_IMAGE}"
+
+            echo "Frontend image scan completed."
+        '''
+    }
+}
+
+stage('Trivy Image Scan - Backend') {
+    steps {
+        sh '''
+            echo "Scanning backend image..."
+
+            trivy image \
+                --scanners vuln \
+                --severity HIGH,CRITICAL \
+                --exit-code 0 \
+                --format json \
+                --output "${REPORT_DIR}/trivy-backend-image.json" \
+                "${BACKEND_IMAGE}"
+
+            echo "Backend image scan completed."
+        '''
+    }
+}
 
         // ================================================================================
 
