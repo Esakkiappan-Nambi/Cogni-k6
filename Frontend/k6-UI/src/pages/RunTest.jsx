@@ -408,6 +408,7 @@ export default function RunTest() {
             <input
               type="text"
               className="rt-search-input"
+              aria-label="Filter test scenarios"
               placeholder="Filter scenarios by name, ID, or status…"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
