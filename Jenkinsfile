@@ -243,13 +243,11 @@ stage('Trivy Image Scan - Frontend') {
 
             trivy image \
                 --scanners vuln \
-                --severity HIGH,CRITICAL \
                 --exit-code 0 \
+                --severity HIGH,CRITICAL \
                 --format json \
                 --output "${REPORT_DIR}/trivy-frontend-image.json" \
                 "${FRONTEND_IMAGE}"
-
-            echo "Frontend image scan completed."
         '''
     }
 }
@@ -261,13 +259,11 @@ stage('Trivy Image Scan - Backend') {
 
             trivy image \
                 --scanners vuln \
-                --severity HIGH,CRITICAL \
                 --exit-code 0 \
+                --severity HIGH,CRITICAL \
                 --format json \
                 --output "${REPORT_DIR}/trivy-backend-image.json" \
                 "${BACKEND_IMAGE}"
-
-            echo "Backend image scan completed."
         '''
     }
 }
